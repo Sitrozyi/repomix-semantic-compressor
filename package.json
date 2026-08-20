@@ -1,0 +1,53 @@
+{
+  "name": "repomix-semantic-compressor",
+  "version": "1.0.0",
+  "description": "AST-powered semantic compressor for Repomix. Drastically reduce LLM context token usage while preserving 100% schema integrity and core logic.",
+  "main": "src/core.mjs",
+  "bin": {
+    "repomix-compress": "./bin/cli.mjs"
+  },
+  "type": "module",
+  "keywords": [
+    "repomix",
+    "repopack",
+    "llm",
+    "token-reduction",
+    "ast",
+    "babel",
+    "prompt-optimization",
+    "claude",
+    "chatgpt"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Sitrozyi/repomix-semantic-compressor.git"
+  },
+  "bugs": {
+    "url": "https://github.com//Sitrozyi/repomix-semantic-compressor/issues"
+  },
+  "homepage": "https://github.com/Sitrozyi/repomix-semantic-compressor#readme",
+  "author": "Sitrozyi",
+  "license": "MIT",
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@babel/generator": "^7.24.0",
+    "@babel/parser": "^7.24.0",
+    "@babel/traverse": "^7.24.0",
+    "fast-xml-parser": "^4.4.0"
+  },
+  "devDependencies": {
+    "vitest": "^1.6.0"
+  },
+  "engines": {
+    "node": ">=18.3.0"
+  }
+}
