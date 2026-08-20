@@ -1,50 +1,103 @@
+<div align="center">
+
 # Repomix Semantic Compressor
 
-[![npm version](https://img.shields.io/npm/v/repomix-semantic-compressor.svg)](https://www.npmjs.com/package/repomix-semantic-compressor)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Node Version](https://img.shields.io/badge/node-%3E%3D18.3.0-informational.svg)](https://nodejs.org)
+**Deterministic AST-driven context compression for LLM code reasoning.**
 
-> AST-powered semantic post-processor for Repomix. Reduces LLM context token consumption by 60% - 80% while preserving complete schema integrity, types, and core logic.
+[![npm version](https://img.shields.io/npm/v/repomix-semantic-compressor.svg?style=flat-square)](https://www.npmjs.com/package/repomix-semantic-compressor)
+[![CI Status](https://img.shields.io/github/actions/workflow/status/Sitrozyi/repomix-semantic-compressor/ci.yml?branch=main&style=flat-square)](https://github.com/Sitrozyi/repomix-semantic-compressor/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
+[![Node Version](https://img.shields.io/badge/node-%3E%3D18.3.0-informational.svg?style=flat-square)](package.json)
+[![MCP Compatible](https://img.shields.io/badge/MCP-1.30%2B-green.svg?style=flat-square)](https://modelcontextprotocol.io)
 
-Repomix Semantic Compressor parses packed repository outputs (JSON / XML) using Babel AST. It safely truncates non-essential implementation details while preserving type definitions, interfaces, short mathematical utilities, and state action signatures.
+<p align="center">
+  <a href="#problem--motivation">Motivation</a> •
+  <a href="#key-architectural-features">Architecture</a> •
+  <a href="#transformation-pipeline">Pipeline</a> •
+  <a href="#code-transformation-example">Before & After</a> •
+  <a href="#installation--usage">Usage</a> •
+  <a href="#mcp-server-integration">MCP Server</a> •
+  <a href="#cli-reference">CLI Reference</a>
+</p>
+
+</div>
 
 ---
 
-## Why Repomix Semantic Compressor?
+## Problem & Motivation
 
-Feeding full repositories into LLMs (Claude 3.5 Sonnet, GPT-4o, Gemini) often exceeds context limits or degrades reasoning performance due to verbose implementation noise.
+Packing entire codebases into LLM context windows (via tools like [Repomix](https://repomix.com)) creates two major bottlenecks:
 
-- **Zero Syntax Errors**: AST-based transformation ensures TypeScript generics, JSX/TSX, and complex expressions remain syntactically valid.
-- **Full Schema Integrity**: TypeScript interfaces, type aliases, classes, and parameter contracts are fully preserved.
-- **Short Function Retention**: Utility functions and mathematical formulas (<= 8 lines) are retained to preserve business logic context.
-- **Action & Protocol Extraction**: Automatically detects switch cases and event dispatchers, annotating action names and payload keys.
-- **Asset & Layout Optimization**: Truncates base64 data, strips heavy SVG icon paths, and preserves essential CSS variables and grid/flex layout rules.
+1. **Context Window Dilution ("Lost in the Middle"):** Large context models suffer from degraded reasoning latency and recall accuracy when inundated with thousands of lines of boilerplate rendering code, styling, and redundant seed data.
+2. **Exponential Token Ingestion Costs:** Full repository context payloads can easily reach 100k–300k+ tokens, costing $0.30 to $1.00+ per prompt cycle during multi-turn agentic workflows.
+
+`repomix-semantic-compressor` performs **lossless architectural extraction**. It processes packed repository artifacts through abstract syntax tree (AST) traversers (Babel, PostCSS), replacing heavy procedural implementations with deterministic type annotations and protocol signatures, achieving **60%–80% token reduction** without corrupting syntax or breaking cross-file contracts.
 
 ---
 
-## Code Comparison
+## Key Architectural Features
 
-### Input (Raw Implementation)
-```javascript
-export interface PlayerState {
-  id: string;
-  hp: number;
-  deck: Card[];
+### 1. Contract-Preserving AST Skeletonization
+- **Full Type & Interface Retention:** All TypeScript type aliases, interfaces, function signatures, generics, and class structures remain intact.
+- **Selective Body Pruning:** Function bodies exceeding the retention threshold (`default: 8 lines`) are safely truncated to `return null as any;` while keeping JSDoc/TSDoc comments intact.
+- **Whitelist-Based Logic Preservation:** Essential core logic and predicate functions (`is*`, `has*`, `validate*`, `calc*`, `sanitize*`, etc.) are retained regardless of line count.
+
+### 2. Protocol & State Machine Extraction
+- **Action & Event Inference:** Automatically analyzes `switch-case` action reducers, `EventEmitter.emit()`, and `store.dispatch()` calls to generate semantic payload signatures (e.g., `/* @payloads: LOGIN(userId, token) | LOGOUT */`).
+
+### 3. Component & Hook Surface Extraction
+- **Top-Level React Hooks:** Retains `useState`, `useRef`, `useContext`, and dependency arrays for `useEffect` / `useCallback` while pruning heavy inner execution logic.
+- **JSX List Deduplication:** Condenses repetitive mock/sibling JSX elements into single-node representative placeholders.
+
+### 4. Multi-Format Structural Optimization
+- **CSS / SCSS / LESS:** Extracts `:root` design tokens, CSS variables, and layout properties (`display`, `position`, `flex`, `grid`) while pruning purely decorative classes.
+- **SQL:** Preserves complete DDL schemas (`CREATE TABLE`, `ALTER TABLE`, indexes) while truncating bulk `INSERT` statements to a 2-row representative sample.
+- **HTML / Assets:** Collapses large SVG path vectors and inlined base64 data URIs.
+
+### 5. 3-Tier Targeted Context Slicing (`--focus`)
+When targeting specific modules (e.g., `--focus src/auth`), the engine builds a 1-hop dependency graph:
+- **Tier 1 (Focus Target):** Full, uncompressed source code implementation.
+- **Tier 2 (1-Hop Dependencies):** AST-skeletonized contracts and types.
+- **Tier 3 (Out-of-Scope):** High-level export signature summaries.
+
+---
+
+## Code Transformation Example
+
+### Input (Raw Implementation — ~280 Tokens)
+```typescript
+import { useState, useEffect } from 'react';
+
+export interface UserSession {
+  userId: string;
+  roles: string[];
 }
 
-export function calculateDamage(base, multiplier) {
-  return Math.max(0, base * multiplier);
+export function validatePermission(user: UserSession, requiredRole: string): boolean {
+  if (!user || !user.roles) return false;
+  return user.roles.includes(requiredRole);
 }
 
-export function handleGameAction(state, action) {
-  switch (action.type) {
-    case 'PLAY_CARD':
-      const target = action.payload.targetId;
-      const card = action.payload.cardId;
-      // ... 150 lines of complex rendering & network emit logic ...
-      break;
-    case 'SURRENDER':
-      // ... 40 lines of cleanup ...
-      break;
-  }
-}
+export const UserProfileView = ({ userId }: { userId: string }) => {
+  const [profile, setProfile] = useState<UserSession | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    fetchUserData(userId).then((res) => {
+      setProfile(res.data);
+      setIsLoading(false);
+    });
+  }, [userId]);
+
+  const handleUpdate = () => {
+    dispatch({ type: 'USER_SYNC', payload: { id: userId, timestamp: Date.now() } });
+    console.log('Update dispatched across network sockets...');
+  };
+
+  return (
+    <div className="profile-container">
+      <h1>{profile?.userId}</h1>
+      <button onClick={handleUpdate}>Sync</button>
+    </div>
+  );
+};
