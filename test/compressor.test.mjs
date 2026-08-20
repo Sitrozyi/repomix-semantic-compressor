@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { skeletonizeWithAST, summarizeCSS, optimizeHTML, extractFiles } from '../src/core.mjs';
-
+import { skeletonizeWithAST, summarizeCSS, optimizeHTML, optimizeSQL, extractFiles } from '../src/core.mjs';
 describe('AST Skeletonizer', () => {
   it('preserves short utility & calculation functions (<= 8 lines)', () => {
     const code = 'function calculateDamage(base, modifier) {\n  const finalVal = base * modifier;\n  return Math.max(0, finalVal);\n}';
@@ -138,6 +137,29 @@ describe('HTML/SVG Optimizer', () => {
     const result = optimizeHTML(html);
     expect(result).toContain('<svg id="logo"><!-- [SVG Icon Path Omitted] --></svg>');
     expect(result).toContain('data:image/...[base64 omitted]...');
+  });
+});
+
+describe('SQL Semantic Optimizer', () => {
+  it('preserves DDL schema definitions while truncating bulk INSERT seed data', () => {
+    const sql = `
+CREATE TABLE users (
+  id INT PRIMARY KEY,
+  email VARCHAR(255) NOT NULL
+);
+
+INSERT INTO users (id, email) VALUES (1, 'a@test.com');
+INSERT INTO users (id, email) VALUES (2, 'b@test.com');
+INSERT INTO users (id, email) VALUES (3, 'c@test.com');
+INSERT INTO users (id, email) VALUES (4, 'd@test.com');
+INSERT INTO users (id, email) VALUES (5, 'e@test.com');
+`;
+    const result = optimizeSQL(sql);
+    expect(result).toContain('CREATE TABLE users');
+    expect(result).toContain("INSERT INTO users (id, email) VALUES (1, 'a@test.com');");
+    expect(result).toContain("INSERT INTO users (id, email) VALUES (2, 'b@test.com');");
+    expect(result).not.toContain("INSERT INTO users (id, email) VALUES (5, 'e@test.com');");
+    expect(result).toContain('/* ... 3 redundant INSERT statements omitted for users ... */');
   });
 });
 

@@ -573,6 +573,51 @@ export function processJSON(jsonStr) {
   }
 }
 
+export function optimizeSQL(sqlCode) {
+  const statements = sqlCode
+    .split(/;\s*(?:\r?\n|$)/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const keptStatements = [];
+  const insertCountsByTable = new Map();
+
+  for (const stmt of statements) {
+    const upper = stmt.toUpperCase();
+
+    // Check if it is an INSERT statement
+    const insertMatch = stmt.match(/^INSERT\s+INTO\s+([`"'\w.]+)/i);
+
+    if (insertMatch) {
+      const tableName = insertMatch[1];
+      const count = (insertCountsByTable.get(tableName) || 0) + 1;
+      insertCountsByTable.set(tableName, count);
+
+      // Keep only the first 2 sample INSERTs per table
+      if (count <= 2) {
+        keptStatements.push(`${stmt};`);
+      }
+    } else {
+      // Always keep DDL (CREATE TABLE, ALTER TABLE, CREATE INDEX, etc.) and other queries
+      keptStatements.push(`${stmt};`);
+    }
+  }
+
+  // Append summary comment for truncated INSERTs
+  const omittedSummaries = [];
+  for (const [table, total] of insertCountsByTable.entries()) {
+    if (total > 2) {
+      omittedSummaries.push(`/* ... ${total - 2} redundant INSERT statements omitted for ${table} ... */`);
+    }
+  }
+
+  if (omittedSummaries.length > 0) {
+    keptStatements.push(omittedSummaries.join('\n'));
+  }
+
+  return keptStatements.join('\n\n');
+}
+
 /**
  * Safely decodes XML entities in raw extracted file contents.
  * @param {string} str
@@ -674,12 +719,14 @@ export function transformFileContent(filePath, originalCode, maxPreserveLines) {
   let processedCode = '';
 
   if (['.css', '.scss', '.less'].includes(ext)) {
-    processedCode = summarizeCSS(normalizedCode);
-  } else if (ext === '.html' || ext === '.htm') {
-    processedCode = optimizeHTML(normalizedCode);
-  } else if (ext === '.json') {
-    processedCode = processJSON(normalizedCode);
-  } else if (['.js', '.mjs', '.cjs', '.ts', '.mts', '.cts', '.jsx', '.tsx'].includes(ext)) {
+      processedCode = summarizeCSS(normalizedCode);
+    } else if (ext === '.html' || ext === '.htm') {
+      processedCode = optimizeHTML(normalizedCode);
+    } else if (ext === '.json') {
+      processedCode = processJSON(normalizedCode);
+    } else if (ext === '.sql') {
+      processedCode = optimizeSQL(normalizedCode);
+    } else if (['.js', '.mjs', '.cjs', '.ts', '.mts', '.cts', '.jsx', '.tsx'].includes(ext)) {
     const isTS = ['.ts', '.mts', '.cts', '.tsx'].includes(ext);
     const isJSX = ['.jsx', '.tsx', '.js'].includes(ext);
     processedCode = skeletonizeWithAST(normalizedCode, isTS, maxPreserveLines, isJSX);
