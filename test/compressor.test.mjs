@@ -79,20 +79,45 @@ export const ItemList = () => {
   });
 
   it('extracts Action payloads from object destructuring', () => {
-    const code = `
-function gameReducer(state, action) {
-  switch (action.type) {
-    case 'CARD_PLAYED': {
-      const { cardId, targetSlot, ...extra } = action.payload;
-      break;
+      const code = `
+  function gameReducer(state, action) {
+    switch (action.type) {
+      case 'CARD_PLAYED': {
+        const { cardId, targetSlot, ...extra } = action.payload;
+        break;
+      }
     }
   }
-}
-`;
-    const result = skeletonizeWithAST(code, false, 2, false);
-    expect(result).toContain('CARD_PLAYED(cardId, targetSlot, ...extra)');
+  `;
+      const result = skeletonizeWithAST(code, false, 2, false);
+      expect(result).toContain('CARD_PLAYED(cardId, targetSlot, ...extra)');
+    });
+
+    it('preserves React Hooks (useState, useRef, useEffect deps) while truncating component body', () => {
+      const reactCode = `
+  export const UserDashboard = ({ userId }) => {
+    const [user, setUser] = useState(null);
+    const countRef = useRef(0);
+    useEffect(() => {
+      fetchUserData(userId).then(res => setUser(res.data));
+      console.log('Heavy render logic');
+    }, [userId]);
+
+    const handleUpdate = () => {
+      console.log('Update button clicked');
+    };
+
+    return <div>{user ? user.name : 'Loading'}</div>;
+  };
+  `;
+      const result = skeletonizeWithAST(reactCode, false, 2, true);
+          expect(result).toContain('const [user, setUser] = useState(null);');
+          expect(result).toContain('const countRef = useRef(0);');
+          expect(result).toMatch(/useEffect\(\(\)\s*=>\s*\{[\s\S]*?\},\s*\[userId\]\);/);
+          expect(result).not.toContain('Heavy render logic');
+          expect(result).not.toContain('Update button clicked');
+    });
   });
-});
 
 describe('CSS Semantic Optimizer', () => {
   it('preserves :root variables and layout properties while omitting decorative styles', () => {

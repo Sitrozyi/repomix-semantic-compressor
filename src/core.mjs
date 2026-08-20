@@ -244,6 +244,48 @@ export function extractProtocolsFromAST(astPath) {
 
 const CORE_LOGIC_REGEX = /^(is|has|can|should|calc|calculate|validate|check|parse|format|sanitize)[A-Z0-9_]/;
 
+function isHookCall(callNode) {
+  if (!callNode || callNode.type !== 'CallExpression') return false;
+  const callee = callNode.callee;
+  if (callee.type === 'Identifier') {
+    return /^use[A-Z0-9_]/.test(callee.name);
+  }
+  if (callee.type === 'MemberExpression' && callee.property.type === 'Identifier') {
+    return /^use[A-Z0-9_]/.test(callee.property.name);
+  }
+  return false;
+}
+
+function isHookStatement(stmt) {
+  if (!stmt) return false;
+  if (stmt.type === 'ExpressionStatement' && isHookCall(stmt.expression)) {
+    return true;
+  }
+  if (stmt.type === 'VariableDeclaration') {
+    return stmt.declarations.some((decl) => decl.init && isHookCall(decl.init));
+  }
+  return false;
+}
+
+function simplifyHookStatement(stmt) {
+  if (stmt.type === 'ExpressionStatement' && isHookCall(stmt.expression)) {
+    const call = stmt.expression;
+    const calleeName = call.callee.type === 'Identifier' ? call.callee.name : call.callee.property?.name || '';
+    if (['useEffect', 'useLayoutEffect', 'useInsertionEffect', 'useCallback', 'useMemo'].includes(calleeName)) {
+      if (call.arguments.length > 0) {
+        const firstArg = call.arguments[0];
+        if (['ArrowFunctionExpression', 'FunctionExpression'].includes(firstArg.type)) {
+          firstArg.body = {
+            type: 'BlockStatement',
+            body: []
+          };
+        }
+      }
+    }
+  }
+  return stmt;
+}
+
 function getFunctionName(astPath) {
   const node = astPath.node;
   if (node.id && node.id.name) return node.id.name;
@@ -358,26 +400,47 @@ export function skeletonizeWithAST(code, isTypeScript, maxPreserveLines = 8, isJ
         if (funcName && CORE_LOGIC_REGEX.test(funcName)) {
           return;
         }
-
         const protocols = extractProtocolsFromAST(astPath);
-        let commentText = ` ...impl (${totalLines} lines)... `;
-        if (protocols.length > 0) {
-          commentText = ` @payloads: ${protocols.join(' | ')} (truncated ${totalLines} lines) `;
-        }
+                let commentText = ` ...impl (${totalLines} lines)... `;
+                if (protocols.length > 0) {
+                  commentText = ` @payloads: ${protocols.join(' | ')} (truncated ${totalLines} lines) `;
+                }
 
-        const leading = node.leadingComments;
+                const leading = node.leadingComments;
 
-        const replacementBody = {
-          type: 'BlockStatement',
-          body: [],
-          innerComments: [{ type: 'CommentBlock', value: commentText }]
-        };
+                // Extract top-level React Hooks (useState, useEffect deps, useRef, custom hooks)
+                const hookStatements = [];
+                if (node.body && node.body.type === 'BlockStatement' && Array.isArray(node.body.body)) {
+                  for (const stmt of node.body.body) {
+                    if (isHookStatement(stmt)) {
+                      hookStatements.push(simplifyHookStatement(stmt));
+                    }
+                  }
+                }
 
-        if (astPath.isArrowFunctionExpression() && node.body.type !== 'BlockStatement') {
-          node.body = replacementBody;
-        } else if (node.body && node.body.type === 'BlockStatement') {
-          node.body = replacementBody;
-        }
+                let replacementBody;
+                if (hookStatements.length > 0) {
+                  const lastHook = hookStatements[hookStatements.length - 1];
+                  lastHook.trailingComments = lastHook.trailingComments || [];
+                  lastHook.trailingComments.push({ type: 'CommentBlock', value: commentText });
+
+                  replacementBody = {
+                    type: 'BlockStatement',
+                    body: hookStatements
+                  };
+                } else {
+                  replacementBody = {
+                    type: 'BlockStatement',
+                    body: [],
+                    innerComments: [{ type: 'CommentBlock', value: commentText }]
+                  };
+                }
+
+                if (astPath.isArrowFunctionExpression() && node.body.type !== 'BlockStatement') {
+                  node.body = replacementBody;
+                } else if (node.body && node.body.type === 'BlockStatement') {
+                  node.body = replacementBody;
+                }
 
         if (leading) {
           node.leadingComments = leading;
