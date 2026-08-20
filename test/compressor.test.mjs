@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { skeletonizeWithAST, summarizeCSS, optimizeHTML, optimizeSQL, extractFiles } from '../src/core.mjs';
+import { skeletonizeWithAST, summarizeCSS, optimizeHTML, optimizeSQL, extractFiles, countTokens, compressRepository } from '../src/core.mjs';
 describe('AST Skeletonizer', () => {
   it('preserves short utility & calculation functions (<= 8 lines)', () => {
     const code = 'function calculateDamage(base, modifier) {\n  const finalVal = base * modifier;\n  return Math.max(0, finalVal);\n}';
@@ -70,12 +70,54 @@ export const ItemList = () => {
     expect(result).not.toContain('console.log("clicked");');
   });
 
-  it('correctly parses generic arrow functions in pure TypeScript (.ts without JSX)', () => {
-    const tsCode = 'export const identity = <T>(val: T): T => {\n  const logged = val;\n  console.log(logged);\n  return logged;\n};';
-    const result = skeletonizeWithAST(tsCode, true, 2, false);
-    expect(result).toMatch(/export const identity = <T,?>\(val: T\): T =>/);
-    expect(result).toContain('...impl (5 lines)...');
-  });
+  it('correctly parses generic arrow functions in pure TypeScript (.ts without JSX) and injects return null as any', () => {
+      const tsCode = 'export const identity = <T>(val: T): T => {\n  const logged = val;\n  console.log(logged);\n  return logged;\n};';
+      const result = skeletonizeWithAST(tsCode, true, 2, false);
+      expect(result).toMatch(/export const identity = <T,?>\(val: T\): T =>/);
+      expect(result).toContain('return null as any;');
+    });
+
+    it('handles nested CSS with @media and CSS nesting without syntax errors', () => {
+      const nestedCSS = `
+  :root { --main-bg: #000; }
+  @media (max-width: 768px) {
+    .sidebar {
+      display: flex;
+      & > .nav-item {
+        position: absolute;
+      }
+    }
+  }
+  .card {
+    color: red;
+  }
+  `;
+      const result = summarizeCSS(nestedCSS);
+      expect(result).toContain('--main-bg: #000');
+      expect(result).toContain('@media (max-width: 768px)');
+      expect(result).toContain('display: flex');
+      expect(result).toContain('position: absolute');
+      expect(result).toContain('.card');
+    });
+
+    it('handles SQL queries with semicolons inside string literals without breaking statements', () => {
+      const sql = `
+  CREATE TABLE logs (
+    id INT PRIMARY KEY,
+    message TEXT
+  );
+
+  INSERT INTO logs (id, message) VALUES (1, 'error; retry needed; code=500');
+  INSERT INTO logs (id, message) VALUES (2, 'success; all good');
+  INSERT INTO logs (id, message) VALUES (3, 'warning; check syntax');
+  `;
+      const result = optimizeSQL(sql);
+      expect(result).toContain('CREATE TABLE logs');
+      expect(result).toContain("INSERT INTO logs (id, message) VALUES (1, 'error; retry needed; code=500');");
+      expect(result).toContain("INSERT INTO logs (id, message) VALUES (2, 'success; all good');");
+      expect(result).not.toContain("INSERT INTO logs (id, message) VALUES (3, 'warning; check syntax');");
+      expect(result).toContain('/* ... 1 redundant INSERT statements omitted for logs ... */');
+    });
 
   it('extracts Action payloads from object destructuring', () => {
       const code = `
@@ -165,11 +207,80 @@ INSERT INTO users (id, email) VALUES (5, 'e@test.com');
 
 describe('Fast-XML & JSON Extractor', () => {
   it('parses XML Repomix output with embedded HTML without corruption', () => {
-    const xml = '<repomix>\n  <file path="src/component.html">\n    <div class="card">Hello &amp; Welcome</div>\n  </file>\n  <file path="src/main.ts">\n    console.log("TS code");\n  </file>\n</repomix>';
-    const files = extractFiles(xml, 'repomix-output.xml');
-    expect(files).toHaveLength(2);
-    expect(files[0].path).toBe('src/component.html');
-    expect(files[0].content).toContain('<div class="card">Hello & Welcome</div>');
-    expect(files[1].path).toBe('src/main.ts');
+      const xml = '<repomix>\n  <file path="src/component.html">\n    <div class="card">Hello &amp; Welcome</div>\n  </file>\n  <file path="src/main.ts">\n    console.log("TS code");\n  </file>\n</repomix>';
+      const files = extractFiles(xml, 'repomix-output.xml');
+      expect(files).toHaveLength(2);
+      expect(files[0].path).toBe('src/component.html');
+      expect(files[0].content).toContain('<div class="card">Hello & Welcome</div>');
+      expect(files[1].path).toBe('src/main.ts');
+    });
   });
-});
+
+  describe('Token Counter & Cost Estimator', () => {
+    it('accurately counts tokens using js-tiktoken cl100k_base tokenizer', () => {
+      const text = 'Hello world, this is a test repository semantic compression.';
+      const tokenCount = countTokens(text);
+      expect(tokenCount).toBeGreaterThan(0);
+      expect(typeof tokenCount).toBe('number');
+    });
+
+    it('handles empty string and falsy inputs safely', () => {
+      expect(countTokens('')).toBe(0);
+      expect(countTokens(null)).toBe(0);
+      expect(countTokens(undefined)).toBe(0);
+    });
+  });
+
+  describe('Focus Mode (Targeted Context Slicing)', () => {
+    const sampleFiles = [
+      {
+        path: 'src/auth/service.ts',
+        content: `
+import { hashPassword } from '../utils/crypto';
+export function login(username, password) {
+  const hash = hashPassword(password);
+  const token = generateToken(username, hash);
+  const session = createSession(token);
+  return session;
+}
+`
+      },
+      {
+        path: 'src/utils/crypto.ts',
+        content: `
+export function hashPassword(pw: string): string {
+  const salt = 'xyz';
+  const hashed = pw + salt;
+  console.log('heavy crypto logic');
+  return hashed;
+}
+`
+      },
+      {
+        path: 'src/components/Button.tsx',
+        content: `
+export const Button = () => {
+  return <button>Click me</button>;
+};
+export const IconButton = () => {
+  return <button>Icon</button>;
+};
+`
+      }
+    ];
+
+    it('preserves full implementation for focused files, skeleton for 1-hop imports, and minimal summary for out-of-scope files', () => {
+      const result = compressRepository(sampleFiles, { focus: 'src/auth', maxPreserveLines: 2 });
+
+      expect(result).toContain('### File: src/auth/service.ts [FOCUS - FULL IMPLEMENTATION]');
+      expect(result).toContain('const session = createSession(token);');
+
+      expect(result).toContain('### File: src/utils/crypto.ts [1-HOP DEPENDENCY - SKELETON]');
+      expect(result).toContain('return null as any;');
+      expect(result).not.toContain('heavy crypto logic');
+
+      expect(result).toContain('### File: src/components/Button.tsx [OUT OF SCOPE - SUMMARY]');
+      expect(result).toContain('Button, IconButton');
+      expect(result).not.toContain('<button>Click me</button>');
+    });
+  });

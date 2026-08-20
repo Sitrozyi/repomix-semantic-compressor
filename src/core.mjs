@@ -6,6 +6,8 @@ import { parse } from '@babel/parser';
 import traversePkg from '@babel/traverse';
 import generatePkg from '@babel/generator';
 import { XMLParser } from 'fast-xml-parser';
+import postcss from 'postcss';
+import { getEncoding } from 'js-tiktoken';
 
 const traverse = traversePkg.default || traversePkg;
 const generate = generatePkg.default || generatePkg;
@@ -15,6 +17,7 @@ const CLI_OPTIONS = {
   input: { type: 'string', short: 'i' },
   output: { type: 'string', short: 'o', default: 'repomix-optimized.md' },
   'max-preserve-lines': { type: 'string', short: 'm', default: '8' },
+  focus: { type: 'string', short: 'f' },
   help: { type: 'boolean', short: 'h' }
 };
 
@@ -24,6 +27,8 @@ const styles = {
   cyan: (t) => `\x1b[36m${t}\x1b[0m`,
   bold: (t) => `\x1b[1m${t}\x1b[0m`,
   gray: (t) => `\x1b[90m${t}\x1b[0m`,
+  yellow: (t) => `\x1b[33m${t}\x1b[0m`,
+  magenta: (t) => `\x1b[35m${t}\x1b[0m`
 };
 
 /**
@@ -40,14 +45,31 @@ function formatBytes(bytes) {
 }
 
 /**
- * Formats estimated LLM token count with thousands separator.
+ * Formats LLM token count with thousands separator.
  * @param {number} tokens
  * @returns {string} Formatted token count
  */
-function formatTokens(tokens) {
-  return `~${(tokens || 0).toLocaleString()}`;
+export function formatTokens(tokens) {
+  return `${(tokens || 0).toLocaleString()}`;
 }
 
+let tokenizerInstance = null;
+/**
+ * Accurately counts LLM tokens using the cl100k_base (GPT-4 / Claude) BPE tokenizer.
+ * @param {string} text
+ * @returns {number} Exact token count
+ */
+export function countTokens(text) {
+  if (!text || typeof text !== 'string') return 0;
+  if (!tokenizerInstance) {
+    tokenizerInstance = getEncoding('cl100k_base');
+  }
+  try {
+    return tokenizerInstance.encode(text).length;
+  } catch {
+    return Math.round(Buffer.byteLength(text, 'utf-8') / 3.8);
+  }
+}
 /**
  * Resolves CLI arguments and determines input/output paths safely.
  * @returns {{ inputFile: string, outputFile: string, maxPreserveLines: number }}
@@ -79,39 +101,21 @@ ${bold}Usage:${reset}
 ${bold}Options:${reset}
   -i, --input <path>               Input Repomix file (auto-detects .xml or .json)
   -o, --output <path>              Output optimized file (default: repomix-optimized.md)
+  -f, --focus <pattern>            Retain full implementation for matched path/module
   -m, --max-preserve-lines <num>   Max lines to preserve full function body (default: 8)
   -h, --help                       Show CLI help and exit
 
 ${bold}Examples:${reset}
   ${dim}$${reset} npx repomix-compress
+  ${dim}$${reset} npx repomix-compress -f src/auth -o auth-context.md
   ${dim}$${reset} npx repomix-compress -i repomix-output.xml -o context.md
-  ${dim}$${reset} npx repomix-compress -m 12
 `);
     process.exit(0);
   }
 
   let inputFile = parsed.input;
   if (!inputFile) {
-    if (fs.existsSync('repomix-output.xml')) {
-      inputFile = 'repomix-output.xml';
-    } else if (fs.existsSync('repomix-output.json')) {
-      inputFile = 'repomix-output.json';
-    } else {
-      console.log('repomix-output not found. Running "npx repomix" automatically...');
-      try {
-        execSync('npx repomix', { stdio: 'ignore' });
-        if (fs.existsSync('repomix-output.xml')) {
-          inputFile = 'repomix-output.xml';
-        } else if (fs.existsSync('repomix-output.json')) {
-          inputFile = 'repomix-output.json';
-        } else {
-          inputFile = 'repomix-output.xml';
-        }
-      } catch (err) {
-        console.warn(`warning: auto-running 'npx repomix' failed: ${err.message}`);
-        inputFile = 'repomix-output.xml';
-      }
-    }
+    inputFile = findDefaultInputFile();
   }
 
   const maxPreserveLines = Number.parseInt(parsed['max-preserve-lines'], 10);
@@ -120,7 +124,30 @@ ${bold}Examples:${reset}
     process.exit(1);
   }
 
-  return { inputFile, outputFile: parsed.output, maxPreserveLines };
+  return { inputFile, outputFile: parsed.output, maxPreserveLines, focus: parsed.focus || null };
+}
+
+/**
+ * Finds default repomix output file or runs repomix if absent.
+ * @returns {string} Path to input file
+ */
+export function findDefaultInputFile() {
+  if (fs.existsSync('repomix-output.xml')) return 'repomix-output.xml';
+  if (fs.existsSync('repomix-output.json')) return 'repomix-output.json';
+
+  const packStart = performance.now();
+  process.stdout.write(`${styles.cyan('ℹ')}  repomix-output not found. Running "npx repomix" automatically... `);
+  try {
+    execSync('npx repomix', { stdio: 'ignore' });
+    const packDuration = ((performance.now() - packStart) / 1000).toFixed(1);
+    console.log(styles.gray(`(done in ${packDuration}s)`));
+    if (fs.existsSync('repomix-output.xml')) return 'repomix-output.xml';
+    if (fs.existsSync('repomix-output.json')) return 'repomix-output.json';
+  } catch (err) {
+    console.log();
+    console.warn(`warning: auto-running 'npx repomix' failed: ${err.message}`);
+  }
+  return 'repomix-output.xml';
 }
 
 function getPayloadPropName(memPath) {
@@ -418,23 +445,28 @@ export function skeletonizeWithAST(code, isTypeScript, maxPreserveLines = 8, isJ
                   }
                 }
 
-                let replacementBody;
-                if (hookStatements.length > 0) {
-                  const lastHook = hookStatements[hookStatements.length - 1];
-                  lastHook.trailingComments = lastHook.trailingComments || [];
-                  lastHook.trailingComments.push({ type: 'CommentBlock', value: commentText });
+                const dummyReturn = {
+                      type: 'ReturnStatement',
+                      argument: {
+                        type: 'TSAsExpression',
+                        expression: { type: 'NullLiteral' },
+                        typeAnnotation: { type: 'TSAnyKeyword' }
+                      },
+                      leadingComments: [{ type: 'CommentBlock', value: commentText }]
+                    };
 
-                  replacementBody = {
-                    type: 'BlockStatement',
-                    body: hookStatements
-                  };
-                } else {
-                  replacementBody = {
-                    type: 'BlockStatement',
-                    body: [],
-                    innerComments: [{ type: 'CommentBlock', value: commentText }]
-                  };
-                }
+                    let replacementBody;
+                    if (hookStatements.length > 0) {
+                      replacementBody = {
+                        type: 'BlockStatement',
+                        body: [...hookStatements, dummyReturn]
+                      };
+                    } else {
+                      replacementBody = {
+                        type: 'BlockStatement',
+                        body: [dummyReturn]
+                      };
+                    }
 
                 if (astPath.isArrowFunctionExpression() && node.body.type !== 'BlockStatement') {
                   node.body = replacementBody;
@@ -472,91 +504,131 @@ export function optimizeHTML(html) {
     .replace(/[ \t]{2,}/g, ' ');
 }
 
+const LAYOUT_PROPS = new Set([
+  'display',
+  'position',
+  'top',
+  'bottom',
+  'left',
+  'right',
+  'grid-template-columns',
+  'grid-template-rows',
+  'grid-template-areas',
+  'flex-direction',
+  'flex-wrap',
+  'align-items',
+  'justify-content',
+  'gap',
+  'z-index',
+  'overflow',
+  'visibility'
+]);
+
 export function summarizeCSS(cssCode) {
-  const cleanCSS = cssCode.replace(/\/\*[\s\S]*?\*\//g, '').trim();
-  if (!cleanCSS) return '/* Empty stylesheet */';
+  if (!cssCode || !cssCode.trim()) return '/* Empty stylesheet */';
+
+  let root;
+  try {
+    root = postcss.parse(cssCode, { from: undefined });
+  } catch {
+    return '/* Invalid CSS stylesheet */';
+  }
 
   const rootVariables = [];
   const layoutRules = [];
   const decorativeClasses = new Set();
 
-  const layoutProps = new Set([
-    'display',
-    'position',
-    'top',
-    'bottom',
-    'left',
-    'right',
-    'grid-template-columns',
-    'grid-template-rows',
-    'grid-template-areas',
-    'flex-direction',
-    'flex-wrap',
-    'align-items',
-    'justify-content',
-    'gap',
-    'z-index',
-    'overflow',
-    'visibility'
-  ]);
-
-  const ruleRegex = /([^{}]+)\{([^{}]+)\}/g;
-  let match;
-
-  while ((match = ruleRegex.exec(cleanCSS)) !== null) {
-    const rawSelector = match[1].trim();
-    const body = match[2].trim();
-
-    if (!rawSelector || !body) continue;
-
-    if (rawSelector === ':root' || rawSelector.includes('--')) {
-      const vars = body
-        .split(';')
-        .map((s) => s.trim())
-        .filter((s) => s.startsWith('--'));
-      if (vars.length > 0) {
-        rootVariables.push(`${rawSelector} {\n  ${vars.join(';\n  ')};\n}`);
-      }
-      continue;
-    }
-
-    const declarations = body
-      .split(';')
-      .map((s) => s.trim())
-      .filter(Boolean);
-
+  function extractRule(ruleNode) {
     const keptDecls = [];
-    for (const decl of declarations) {
-      const colonIndex = decl.indexOf(':');
-      if (colonIndex === -1) continue;
-      const prop = decl.slice(0, colonIndex).trim().toLowerCase();
-      const val = decl.slice(colonIndex + 1).trim();
+    const nestedRules = [];
 
-      if (layoutProps.has(prop) || prop.startsWith('--')) {
-        keptDecls.push(`${prop}: ${val}`);
+    for (const child of ruleNode.nodes || []) {
+      if (child.type === 'decl') {
+        const prop = child.prop.toLowerCase();
+        if (LAYOUT_PROPS.has(prop) || prop.startsWith('--')) {
+          keptDecls.push(`${child.prop}: ${child.value}`);
+        }
+      } else if (child.type === 'rule') {
+        const sub = extractRule(child);
+        if (sub) nestedRules.push(sub);
       }
     }
 
-    if (keptDecls.length > 0) {
-      layoutRules.push(`${rawSelector} { ${keptDecls.join('; ')} }`);
-    } else {
-      const classMatches = rawSelector.match(/\.[a-zA-Z0-9_-]+/g);
-      if (classMatches) {
-        for (const cls of classMatches) decorativeClasses.add(cls);
+    if (keptDecls.length > 0 || nestedRules.length > 0) {
+      const parts = [];
+      if (keptDecls.length > 0) {
+        parts.push(keptDecls.join('; '));
+      }
+      if (nestedRules.length > 0) {
+        parts.push(nestedRules.join('\n  '));
+      }
+      return `${ruleNode.selector} { ${parts.join('; ')} }`;
+    }
+    return null;
+  }
+
+  function processContainer(container) {
+    if (!container || !container.nodes) return;
+
+    for (const node of container.nodes) {
+      if (node.type === 'comment') continue;
+
+      if (node.type === 'atrule') {
+        const atName = node.name.toLowerCase();
+        if (['media', 'supports', 'container'].includes(atName)) {
+          const subLayoutRules = [];
+          for (const subNode of node.nodes || []) {
+            if (subNode.type === 'rule') {
+              const ruleResult = extractRule(subNode);
+              if (ruleResult) subLayoutRules.push(ruleResult);
+            }
+          }
+          if (subLayoutRules.length > 0) {
+            layoutRules.push(`@${node.name} ${node.params} {\n  ${subLayoutRules.join('\n  ')}\n}`);
+          }
+        }
+        continue;
+      }
+
+      if (node.type === 'rule') {
+        const selector = node.selector ? node.selector.trim() : '';
+        if (!selector) continue;
+
+        if (selector === ':root' || selector.includes('--')) {
+          const varDecls = [];
+          node.walkDecls((decl) => {
+            if (decl.prop.startsWith('--')) {
+              varDecls.push(`${decl.prop}: ${decl.value}`);
+            }
+          });
+          if (varDecls.length > 0) {
+            rootVariables.push(`${selector} {\n  ${varDecls.join(';\n  ')};\n}`);
+          }
+          continue;
+        }
+
+        const ruleResult = extractRule(node);
+        if (ruleResult) {
+          layoutRules.push(ruleResult);
+        } else {
+          const classMatches = selector.match(/\.[a-zA-Z0-9_-]+/g);
+          if (classMatches) {
+            for (const cls of classMatches) decorativeClasses.add(cls);
+          }
+        }
       }
     }
   }
 
-  const sections = [];
+  processContainer(root);
 
+  const sections = [];
   if (rootVariables.length > 0) {
     sections.push(`/* Design Tokens & CSS Variables */\n${rootVariables.join('\n\n')}`);
   }
-
   if (layoutRules.length > 0) {
     sections.push(`/* Layout & Structural Rules */\n${layoutRules.join('\n')}`);
   }
-
   if (decorativeClasses.size > 0) {
     sections.push(`/* Decorative/Component Classes (${decorativeClasses.size} classes) */\n` + Array.from(decorativeClasses).join(', '));
   }
@@ -572,12 +644,135 @@ export function processJSON(jsonStr) {
     return jsonStr;
   }
 }
+export function splitSQLStatements(sqlCode) {
+  const statements = [];
+  let current = '';
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  let inBacktick = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  for (let i = 0; i < sqlCode.length; i++) {
+    const char = sqlCode[i];
+    const nextChar = sqlCode[i + 1];
+
+    if (inLineComment) {
+      current += char;
+      if (char === '\n') {
+        inLineComment = false;
+      }
+      continue;
+    }
+
+    if (inBlockComment) {
+      current += char;
+      if (char === '*' && nextChar === '/') {
+        current += nextChar;
+        i++;
+        inBlockComment = false;
+      }
+      continue;
+    }
+
+    if (inSingleQuote) {
+      current += char;
+      if (char === '\\') {
+        if (nextChar) {
+          current += nextChar;
+          i++;
+        }
+      } else if (char === "'") {
+        if (nextChar === "'") {
+          current += nextChar;
+          i++;
+        } else {
+          inSingleQuote = false;
+        }
+      }
+      continue;
+    }
+
+    if (inDoubleQuote) {
+      current += char;
+      if (char === '\\') {
+        if (nextChar) {
+          current += nextChar;
+          i++;
+        }
+      } else if (char === '"') {
+        if (nextChar === '"') {
+          current += nextChar;
+          i++;
+        } else {
+          inDoubleQuote = false;
+        }
+      }
+      continue;
+    }
+
+    if (inBacktick) {
+      current += char;
+      if (char === '`') {
+        inBacktick = false;
+      }
+      continue;
+    }
+
+    if (char === '-' && nextChar === '-') {
+      inLineComment = true;
+      current += char + nextChar;
+      i++;
+      continue;
+    }
+
+    if (char === '/' && nextChar === '*') {
+      inBlockComment = true;
+      current += char + nextChar;
+      i++;
+      continue;
+    }
+
+    if (char === "'") {
+      inSingleQuote = true;
+      current += char;
+      continue;
+    }
+
+    if (char === '"') {
+      inDoubleQuote = true;
+      current += char;
+      continue;
+    }
+
+    if (char === '`') {
+      inBacktick = true;
+      current += char;
+      continue;
+    }
+
+    if (char === ';') {
+      const trimmed = current.trim();
+      if (trimmed) {
+        statements.push(trimmed);
+      }
+      current = '';
+      continue;
+    }
+
+    current += char;
+  }
+
+  const trimmed = current.trim();
+  if (trimmed) {
+    statements.push(trimmed);
+  }
+
+  return statements;
+}
 
 export function optimizeSQL(sqlCode) {
-  const statements = sqlCode
-    .split(/;\s*(?:\r?\n|$)/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const statements = splitSQLStatements(sqlCode);
 
   const keptStatements = [];
   const insertCountsByTable = new Map();
@@ -727,9 +922,9 @@ export function transformFileContent(filePath, originalCode, maxPreserveLines) {
     } else if (ext === '.sql') {
       processedCode = optimizeSQL(normalizedCode);
     } else if (['.js', '.mjs', '.cjs', '.ts', '.mts', '.cts', '.jsx', '.tsx'].includes(ext)) {
-    const isTS = ['.ts', '.mts', '.cts', '.tsx'].includes(ext);
-    const isJSX = ['.jsx', '.tsx', '.js'].includes(ext);
-    processedCode = skeletonizeWithAST(normalizedCode, isTS, maxPreserveLines, isJSX);
+      const isTS = ['.ts', '.mts', '.cts', '.tsx'].includes(ext);
+      const isJSX = ['.jsx', '.tsx'].includes(ext);
+      processedCode = skeletonizeWithAST(normalizedCode, isTS, maxPreserveLines, isJSX);
   } else {
     processedCode = normalizedCode;
   }
@@ -740,9 +935,108 @@ export function transformFileContent(filePath, originalCode, maxPreserveLines) {
   };
 }
 
+/**
+ * Extracts import and require paths from source code.
+ * @param {string} code
+ * @returns {string[]}
+ */
+export function extractImports(code) {
+  const importedPaths = [];
+  const importRegex = /(?:import\s+(?:[\s\S]*?from\s+)?['"]([^'"]+)['"]|export\s+[\s\S]*?from\s+['"]([^'"]+)['"]|require\s*\(\s*['"]([^'"]+)['"]\s*\))/g;
+  let match;
+  while ((match = importRegex.exec(code)) !== null) {
+    importedPaths.push(match[1] || match[2] || match[3]);
+  }
+  return importedPaths;
+}
+
+/**
+ * Summarizes top-level exports for out-of-scope non-focused files.
+ * @param {string} code
+ * @returns {string}
+ */
+export function summarizeExports(code) {
+  const exports = [];
+  const exportRegex = /export\s+(?:default\s+)?(?:async\s+)?(?:function\*?|class|const|let|var|interface|type|enum)\s+([a-zA-Z0-9_$]+)/g;
+  let m;
+  while ((m = exportRegex.exec(code)) !== null) {
+    exports.push(m[1]);
+  }
+  if (exports.length > 0) {
+    return `// Exported signatures: ${exports.join(', ')}\n// [Non-focused implementation omitted]`;
+  }
+  return `// [Non-focused implementation omitted]`;
+}
+
+/**
+ * Compresses an array of repository files with optional focus filtering.
+ * @param {{ path: string, content: string }[]} files
+ * @param {{ focus?: string|null, maxPreserveLines?: number }} options
+ * @returns {string}
+ */
+export function compressRepository(files, options = {}) {
+  const { focus = null, maxPreserveLines = 8 } = options;
+  const sections = [
+    `[SEMANTIC REPOSITORY SKELETON CONTEXT]\n  Optimized for LLM reasoning & architectural analysis.\n========================================\n\n`
+  ];
+
+  if (focus) {
+    const focusFiles = new Set();
+    const oneHopFiles = new Set();
+
+    // 1. Identify focus files and their 1-hop dependencies
+    for (const f of files) {
+      if (f.path.includes(focus)) {
+        focusFiles.add(f.path);
+        const imports = extractImports(f.content);
+        for (const imp of imports) {
+          if (imp.startsWith('.')) {
+            const currentDir = path.dirname(f.path);
+            const resolvedBase = path.normalize(path.join(currentDir, imp)).replace(/\\/g, '/');
+            for (const candidate of files) {
+              const candidateWithoutExt = candidate.path.replace(/\.[^.]+$/, '');
+              if (candidate.path === resolvedBase || candidateWithoutExt === resolvedBase || candidate.path.startsWith(resolvedBase)) {
+                oneHopFiles.add(candidate.path);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // 2. Synthesize 3-tier contextual compression
+    for (const file of files) {
+      const ext = path.extname(file.path).toLowerCase();
+      const lang = ext ? ext.replace(/^\./, '') : '';
+
+      if (focusFiles.has(file.path)) {
+        // Tier 1: Full implementation
+        sections.push(`### File: ${file.path} [FOCUS - FULL IMPLEMENTATION]\n\`\`\`\`${lang}\n${file.content.trim()}\n\`\`\`\`\n\n`);
+      } else if (oneHopFiles.has(file.path)) {
+        // Tier 2: Skeletonized 1-hop dependency
+        const transformed = transformFileContent(file.path, file.content, maxPreserveLines);
+        sections.push(`### File: ${file.path} [1-HOP DEPENDENCY - SKELETON]\n\`\`\`\`${lang}\n${transformed.code}\n\`\`\`\`\n\n`);
+      } else {
+        // Tier 3: Minimal export summary
+        const summary = summarizeExports(file.content);
+        sections.push(`### File: ${file.path} [OUT OF SCOPE - SUMMARY]\n\`\`\`\`${lang}\n${summary}\n\`\`\`\`\n\n`);
+      }
+    }
+  } else {
+    // Normal full skeleton mode
+    for (const file of files) {
+      const transformed = transformFileContent(file.path, file.content, maxPreserveLines);
+      const lang = transformed.ext ? transformed.ext.replace(/^\./, '') : '';
+      sections.push(`### File: ${file.path}\n\`\`\`\`${lang}\n${transformed.code}\n\`\`\`\`\n\n`);
+    }
+  }
+
+  return sections.join('');
+}
+
 export async function main() {
+  const { inputFile, outputFile, maxPreserveLines, focus } = resolveConfig();
   const startTime = performance.now();
-  const { inputFile, outputFile, maxPreserveLines } = resolveConfig();
 
   if (!fs.existsSync(inputFile)) {
     throw new Error(`Input artifact not found: ${inputFile}`);
@@ -750,46 +1044,43 @@ export async function main() {
 
   const rawContent = fs.readFileSync(inputFile, 'utf-8');
   const inputBytes = Buffer.byteLength(rawContent, 'utf-8');
-  const inputTokens = Math.round(inputBytes / 3.8); // Standard empirical token heuristic
+  const inputTokens = countTokens(rawContent);
 
   const files = extractFiles(rawContent, inputFile);
-  const outStream = fs.createWriteStream(outputFile, { encoding: 'utf-8' });
+  const optimizedContent = compressRepository(files, { focus, maxPreserveLines });
 
-  // Stream semantic skeleton header
-  await writeToStream(
-    outStream,
-    `[SEMANTIC REPOSITORY SKELETON CONTEXT]\n  Optimized for LLM reasoning & architectural analysis.\n========================================\n\n`
-  );
-  // Transform and stream individual file skeletons
-    for (const file of files) {
-      const transformed = transformFileContent(file.path, file.content, maxPreserveLines);
-      const lang = transformed.ext ? transformed.ext.replace(/^\./, '') : '';
-      // Use 4-backtick code fences to prevent nested markdown/backtick collisions
-      await writeToStream(outStream, `### File: ${file.path}\n\`\`\`\`${lang}\n${transformed.code}\n\`\`\`\`\n\n`);
-    }
+  fs.writeFileSync(outputFile, optimizedContent, 'utf-8');
 
-  await new Promise((resolve) => outStream.end(resolve));
-
-  // Compute final compression metrics
-  const outputBytes = fs.statSync(outputFile).size;
-  const outputTokens = Math.round(outputBytes / 3.8);
+  // Compute exact output metrics
+  const outputRaw = fs.readFileSync(outputFile, 'utf-8');
+  const outputBytes = Buffer.byteLength(outputRaw, 'utf-8');
+  const outputTokens = countTokens(outputRaw);
   const duration = Math.round(performance.now() - startTime);
 
   const byteReduction = (((inputBytes - outputBytes) / inputBytes) * 100).toFixed(1);
   const tokenReduction = (((inputTokens - outputTokens) / inputTokens) * 100).toFixed(1);
 
+  const savedTokens = Math.max(0, inputTokens - outputTokens);
+  const estimatedSavings = ((savedTokens * 3.0) / 1_000_000).toFixed(4);
+
   // Render high-signal execution summary to stdout
-    const labelTokens = 'LLM Tokens:'.padEnd(12);
-    const labelSize   = 'File Size:'.padEnd(12);
-    const labelOutput = 'Output:'.padEnd(12);
+  const labelTokens = 'LLM Tokens:'.padEnd(14);
+  const labelSize = 'File Size:'.padEnd(14);
+  const labelSavings = 'Est. Savings:'.padEnd(14);
+  const labelFocus = 'Focus Filter:'.padEnd(14);
+  const labelOutput = 'Output File:'.padEnd(14);
 
-    const inTokStr  = formatTokens(inputTokens).padEnd(10);
-    const outTokStr = formatTokens(outputTokens).padEnd(10);
-    const inByteStr = formatBytes(inputBytes).padEnd(10);
-    const outByteStr= formatBytes(outputBytes).padEnd(10);
+  const inTokStr = `${formatTokens(inputTokens)}`.padStart(9);
+  const outTokStr = `${formatTokens(outputTokens)}`.padStart(8);
+  const inByteStr = formatBytes(inputBytes).padStart(9);
+  const outByteStr = formatBytes(outputBytes).padStart(8);
 
-    console.log(`\n${styles.green('✔')}  ${styles.bold(`Optimized ${files.length} files in ${duration}ms`)}\n`);
-    console.log(`  ${styles.gray(labelTokens)} ${inTokStr} ${styles.gray('→')}   ${styles.cyan(outTokStr)}  ${styles.green(`(-${tokenReduction}%)`)}`);
-    console.log(`  ${styles.gray(labelSize)} ${inByteStr} ${styles.gray('→')}   ${styles.cyan(outByteStr)}  ${styles.green(`(-${byteReduction}%)`)}`);
-    console.log(`  ${styles.gray(labelOutput)} ${styles.bold(outputFile)}\n`);
+  console.log(`\n${styles.green('✔')}  ${styles.bold(`Optimized ${files.length} files in ${duration}ms`)}\n`);
+  console.log(`  ${styles.gray(labelTokens)} ${inTokStr}  ${styles.gray('→')}  ${styles.cyan(outTokStr)}   ${styles.green(`(-${tokenReduction}%)`)}`);
+  console.log(`  ${styles.gray(labelSize)} ${inByteStr}  ${styles.gray('→')}  ${styles.cyan(outByteStr)}   ${styles.green(`(-${byteReduction}%)`)}`);
+  console.log(`  ${styles.gray(labelSavings)} ${styles.yellow(`~$${estimatedSavings} / prompt`)} ${styles.gray('(Claude 3.5 Sonnet / GPT-4o input rate)')}`);
+  if (focus) {
+    console.log(`  ${styles.gray(labelFocus)} ${styles.magenta(focus)}`);
+  }
+  console.log(`  ${styles.gray(labelOutput)} ${styles.bold(outputFile)}\n`);
 }

@@ -1,10 +1,11 @@
 {
   "name": "repomix-semantic-compressor",
   "version": "1.0.0",
-  "description": "AST-powered semantic compressor for Repomix. Drastically reduce LLM context token usage while preserving 100% schema integrity and core logic.",
+  "description": "AST-powered semantic compressor for Repomix. Drastically reduce LLM context token usage while preserving complete schema integrity and core logic.",
   "main": "src/core.mjs",
   "bin": {
-    "repomix-compress": "./bin/cli.mjs"
+    "repomix-compress": "./bin/cli.mjs",
+    "repomix-compress-mcp": "./bin/mcp-server.mjs"
   },
   "type": "module",
   "keywords": [
@@ -19,13 +20,13 @@
     "chatgpt"
   ],
   "repository": {
-      "type": "git",
-      "url": "git+https://github.com/Sitrozyi/repomix-semantic-compressor.git"
-    },
-    "bugs": {
-      "url": "https://github.com/Sitrozyi/repomix-semantic-compressor/issues"
-    },
-    "homepage": "https://github.com/Sitrozyi/repomix-semantic-compressor#readme",
+    "type": "git",
+    "url": "git+https://github.com/Sitrozyi/repomix-semantic-compressor.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Sitrozyi/repomix-semantic-compressor/issues"
+  },
+  "homepage": "https://github.com/Sitrozyi/repomix-semantic-compressor#readme",
   "author": "Sitrozyi",
   "license": "MIT",
   "files": [
@@ -36,13 +37,17 @@
   ],
   "scripts": {
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "mcp": "node bin/mcp-server.mjs"
   },
   "dependencies": {
     "@babel/generator": "^7.24.0",
     "@babel/parser": "^7.24.0",
     "@babel/traverse": "^7.24.0",
-    "fast-xml-parser": "^4.4.0"
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "fast-xml-parser": "^4.4.0",
+    "js-tiktoken": "^1.0.21",
+    "postcss": "^8.5.26"
   },
   "devDependencies": {
     "vitest": "^1.6.0"
