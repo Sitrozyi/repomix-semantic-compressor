@@ -31,7 +31,7 @@ Packing entire codebases into LLM context windows (via tools like [Repomix](http
 1. **Context Window Dilution ("Lost in the Middle"):** Large context models suffer from degraded reasoning latency and recall accuracy when inundated with thousands of lines of boilerplate rendering code, styling, and redundant seed data.
 2. **Exponential Token Ingestion Costs:** Full repository context payloads can easily reach 100k–300k+ tokens, costing $0.30 to $1.00+ per prompt cycle during multi-turn agentic workflows.
 
-`repomix-semantic-compressor` performs **lossless architectural extraction**. It processes packed repository artifacts through abstract syntax tree (AST) traversers (Babel, PostCSS), replacing heavy procedural implementations with deterministic type annotations and protocol signatures, achieving **60%–80% token reduction** without corrupting syntax or breaking cross-file contracts.
+`repomix-semantic-compressor` performs **lossless architectural extraction**. It processes packed repository artifacts through abstract syntax tree (AST) traversers (Babel, PostCSS), replacing heavy procedural implementations with deterministic type annotations and protocol signatures, achieving **70%+ token reduction** without corrupting syntax or breaking cross-file contracts.
 
 ---
 
