@@ -157,11 +157,31 @@ export function extractProtocolsFromAST(astPath) {
         const payloadProps = new Set();
 
         casePath.traverse({
-          MemberExpression(memPath) {
-            const propName = getPayloadPropName(memPath);
-            if (propName) payloadProps.add(propName);
-          }
-        });
+                  MemberExpression(memPath) {
+                    const propName = getPayloadPropName(memPath);
+                    if (propName) payloadProps.add(propName);
+                  },
+                  VariableDeclarator(varPath) {
+                    const init = varPath.node.init;
+                    if (!init) return;
+
+                    const isPayloadSource =
+                      (init.type === 'Identifier' && ['payload', 'data', 'event'].includes(init.name)) ||
+                      (init.type === 'MemberExpression' &&
+                        init.property.type === 'Identifier' &&
+                        ['payload', 'data'].includes(init.property.name));
+
+                    if (isPayloadSource && varPath.node.id.type === 'ObjectPattern') {
+                      for (const prop of varPath.node.id.properties) {
+                        if (prop.type === 'ObjectProperty' && prop.key.type === 'Identifier') {
+                          payloadProps.add(prop.key.name);
+                        } else if (prop.type === 'RestElement' && prop.argument.type === 'Identifier') {
+                          payloadProps.add(`...${prop.argument.name}`);
+                        }
+                      }
+                    }
+                  }
+                });
 
         if (payloadProps.size > 0) {
           protocols.add(`${actionName}(${Array.from(payloadProps).join(', ')})`);
@@ -243,13 +263,13 @@ function getFunctionName(astPath) {
   return null;
 }
 
-export function skeletonizeWithAST(code, isTypeScript, maxPreserveLines = 8) {
+export function skeletonizeWithAST(code, isTypeScript, maxPreserveLines = 8, isJSX = true) {
   try {
     const ast = parse(code, {
       sourceType: 'unambiguous',
       errorRecovery: true,
       plugins: [
-        'jsx',
+        isJSX ? 'jsx' : null,
         isTypeScript ? 'typescript' : null,
         ['decorators', { decoratorsBeforeExport: true }],
         'classProperties',
@@ -586,24 +606,27 @@ export function writeToStream(stream, chunk) {
 
 export function transformFileContent(filePath, originalCode, maxPreserveLines) {
   const ext = path.extname(filePath).toLowerCase();
+  // Normalize Windows CRLF to standard LF
+  const normalizedCode = originalCode.replace(/\r\n/g, '\n');
   let processedCode = '';
 
   if (['.css', '.scss', '.less'].includes(ext)) {
-    processedCode = summarizeCSS(originalCode);
+    processedCode = summarizeCSS(normalizedCode);
   } else if (ext === '.html' || ext === '.htm') {
-    processedCode = optimizeHTML(originalCode);
+    processedCode = optimizeHTML(normalizedCode);
   } else if (ext === '.json') {
-    processedCode = processJSON(originalCode);
-  } else if (['.js', '.mjs', '.ts', '.jsx', '.tsx'].includes(ext)) {
-    const isTS = ['.ts', '.tsx'].includes(ext);
-    processedCode = skeletonizeWithAST(originalCode, isTS, maxPreserveLines);
+    processedCode = processJSON(normalizedCode);
+  } else if (['.js', '.mjs', '.cjs', '.ts', '.mts', '.cts', '.jsx', '.tsx'].includes(ext)) {
+    const isTS = ['.ts', '.mts', '.cts', '.tsx'].includes(ext);
+    const isJSX = ['.jsx', '.tsx', '.js'].includes(ext);
+    processedCode = skeletonizeWithAST(normalizedCode, isTS, maxPreserveLines, isJSX);
   } else {
-    processedCode = originalCode;
+    processedCode = normalizedCode;
   }
 
   return {
     ext,
-    code: processedCode.replace(/\n{3,}/g, '\n\n').trim()
+    code: processedCode.replace(/(?:\r?\n){3,}/g, '\n\n').trim()
   };
 }
 
@@ -627,13 +650,13 @@ export async function main() {
     outStream,
     `[SEMANTIC REPOSITORY SKELETON CONTEXT]\n  Optimized for LLM reasoning & architectural analysis.\n========================================\n\n`
   );
-
   // Transform and stream individual file skeletons
-  for (const file of files) {
-    const transformed = transformFileContent(file.path, file.content, maxPreserveLines);
-    const lang = transformed.ext ? transformed.ext.replace(/^\./, '') : '';
-    await writeToStream(outStream, `### File: ${file.path}\n\`\`\`${lang}\n${transformed.code}\n\`\`\`\n\n`);
-  }
+    for (const file of files) {
+      const transformed = transformFileContent(file.path, file.content, maxPreserveLines);
+      const lang = transformed.ext ? transformed.ext.replace(/^\./, '') : '';
+      // Use 4-backtick code fences to prevent nested markdown/backtick collisions
+      await writeToStream(outStream, `### File: ${file.path}\n\`\`\`\`${lang}\n${transformed.code}\n\`\`\`\`\n\n`);
+    }
 
   await new Promise((resolve) => outStream.end(resolve));
 
@@ -646,8 +669,17 @@ export async function main() {
   const tokenReduction = (((inputTokens - outputTokens) / inputTokens) * 100).toFixed(1);
 
   // Render high-signal execution summary to stdout
+    const labelTokens = 'LLM Tokens:'.padEnd(12);
+    const labelSize   = 'File Size:'.padEnd(12);
+    const labelOutput = 'Output:'.padEnd(12);
+
+    const inTokStr  = formatTokens(inputTokens).padEnd(10);
+    const outTokStr = formatTokens(outputTokens).padEnd(10);
+    const inByteStr = formatBytes(inputBytes).padEnd(10);
+    const outByteStr= formatBytes(outputBytes).padEnd(10);
+
     console.log(`\n${styles.green('✔')}  ${styles.bold(`Optimized ${files.length} files in ${duration}ms`)}\n`);
-    console.log(`  ${styles.gray('LLM Tokens:')}   ${formatTokens(inputTokens).padEnd(9)} ${styles.gray('→')}   ${styles.cyan(formatTokens(outputTokens).padEnd(9))}  ${styles.green(`(-${tokenReduction}%)`)}`);
-    console.log(`  ${styles.gray('File Size:')}    ${formatBytes(inputBytes).padEnd(9)} ${styles.gray('→')}   ${styles.cyan(formatBytes(outputBytes).padEnd(9))}  ${styles.green(`(-${byteReduction}%)`)}`);
-    console.log(`  ${styles.gray('Output:')}       ${styles.bold(outputFile)}\n`);
+    console.log(`  ${styles.gray(labelTokens)} ${inTokStr} ${styles.gray('→')}   ${styles.cyan(outTokStr)}  ${styles.green(`(-${tokenReduction}%)`)}`);
+    console.log(`  ${styles.gray(labelSize)} ${inByteStr} ${styles.gray('→')}   ${styles.cyan(outByteStr)}  ${styles.green(`(-${byteReduction}%)`)}`);
+    console.log(`  ${styles.gray(labelOutput)} ${styles.bold(outputFile)}\n`);
 }

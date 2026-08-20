@@ -19,13 +19,13 @@
     "chatgpt"
   ],
   "repository": {
-    "type": "git",
-    "url": "git+https://github.com/Sitrozyi/repomix-semantic-compressor.git"
-  },
-  "bugs": {
-    "url": "https://github.com//Sitrozyi/repomix-semantic-compressor/issues"
-  },
-  "homepage": "https://github.com/Sitrozyi/repomix-semantic-compressor#readme",
+      "type": "git",
+      "url": "git+https://github.com/Sitrozyi/repomix-semantic-compressor.git"
+    },
+    "bugs": {
+      "url": "https://github.com/Sitrozyi/repomix-semantic-compressor/issues"
+    },
+    "homepage": "https://github.com/Sitrozyi/repomix-semantic-compressor#readme",
   "author": "Sitrozyi",
   "license": "MIT",
   "files": [
