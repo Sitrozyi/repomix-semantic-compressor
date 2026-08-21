@@ -21,6 +21,8 @@ const CLI_OPTIONS = {
   'max-preserve-lines': { type: 'string', short: 'm', default: '8' },
   focus: { type: 'string', short: 'f' },
   'exact-tokens': { type: 'boolean', short: 'e', default: false },
+  'auto-pack': { type: 'boolean', default: true },
+  'no-auto-pack': { type: 'boolean', default: false },
   help: { type: 'boolean', short: 'h' }
 };
 
@@ -112,6 +114,7 @@ ${bold}Options:${reset}
   -f, --focus <pattern>            Retain full implementation for matched path/module
   -m, --max-preserve-lines <num>   Max lines to preserve full function body (default: 8)
   -e, --exact-tokens               Use exact BPE tokenizer (slower, default: false)
+      --no-auto-pack               Disable automatic repomix execution if artifact is missing
   -h, --help                       Show CLI help and exit
 
 ${bold}Examples:${reset}
@@ -122,9 +125,10 @@ ${bold}Examples:${reset}
     process.exit(0);
   }
 
+  const autoPack = parsed['no-auto-pack'] ? false : (parsed['auto-pack'] ?? true);
   let inputFile = parsed.input;
   if (!inputFile) {
-    inputFile = findDefaultInputFile();
+    inputFile = findDefaultInputFile(autoPack);
   }
 
   const maxPreserveLines = Number.parseInt(parsed['max-preserve-lines'], 10);
@@ -138,31 +142,49 @@ ${bold}Examples:${reset}
     outputFile: parsed.output,
     maxPreserveLines,
     focus: parsed.focus || null,
-    exactTokens: Boolean(parsed['exact-tokens'])
+    exactTokens: Boolean(parsed['exact-tokens']),
+    autoPack
   };
 }
 
 /**
- * Finds default repomix output file or runs repomix if absent.
+ * Finds default repomix output file or automatically runs repomix by default.
+ * @param {boolean} [autoPack=true]
+ * @param {string} [baseDir='.']
  * @returns {string} Path to input file
  */
-export function findDefaultInputFile() {
-  if (fs.existsSync('repomix-output.xml')) return 'repomix-output.xml';
-  if (fs.existsSync('repomix-output.json')) return 'repomix-output.json';
+export function findDefaultInputFile(autoPack = true, baseDir = '.') {
+  const xmlPath = path.normalize(path.join(baseDir, 'repomix-output.xml')).replace(/\\/g, '/');
+  const jsonPath = path.normalize(path.join(baseDir, 'repomix-output.json')).replace(/\\/g, '/');
+
+  if (fs.existsSync(xmlPath)) return xmlPath;
+  if (fs.existsSync(jsonPath)) return jsonPath;
+
+  if (!autoPack) {
+    throw new Error(
+      'Repomix output file not found (repomix-output.xml or repomix-output.json).\n' +
+      'Please run "npx repomix" first, or omit --no-auto-pack to pack automatically.'
+    );
+  }
 
   const packStart = performance.now();
   process.stdout.write(`${styles.cyan('ℹ')}  repomix-output not found. Running "npx repomix" automatically... `);
   try {
-    execSync('npx repomix', { stdio: 'ignore' });
+    // stdio: 'pipe' で Repomix 本体の冗長な出力を完全に抑止
+    execSync('npx repomix', { stdio: 'pipe' });
     const packDuration = ((performance.now() - packStart) / 1000).toFixed(1);
     console.log(styles.gray(`(done in ${packDuration}s)`));
+
+    if (fs.existsSync(xmlPath)) return xmlPath;
+    if (fs.existsSync(jsonPath)) return jsonPath;
     if (fs.existsSync('repomix-output.xml')) return 'repomix-output.xml';
     if (fs.existsSync('repomix-output.json')) return 'repomix-output.json';
   } catch (err) {
     console.log();
-    console.warn(`warning: auto-running 'npx repomix' failed: ${err.message}`);
+    const errMsg = err.stderr ? err.stderr.toString().trim() : err.message;
+    throw new Error(`Auto-running "npx repomix" failed: ${errMsg}`);
   }
-  return 'repomix-output.xml';
+  throw new Error('Repomix completed but neither repomix-output.xml nor repomix-output.json was found.');
 }
 
 function getPayloadPropName(memPath) {
@@ -309,19 +331,43 @@ function isHookStatement(stmt) {
   return false;
 }
 
+function isHookCallback(astPath) {
+  if (!astPath.parentPath) return false;
+  const parent = astPath.parentPath.node;
+  if (parent.type === 'CallExpression' && isHookCall(parent)) {
+    return true;
+  }
+  return false;
+}
+
+function simplifyHookCall(call) {
+  if (!call || call.type !== 'CallExpression') return call;
+  const calleeName = call.callee.type === 'Identifier' ? call.callee.name : call.callee.property?.name || '';
+  if (['useEffect', 'useLayoutEffect', 'useInsertionEffect', 'useCallback', 'useMemo'].includes(calleeName)) {
+    if (call.arguments.length > 0) {
+      const firstArg = call.arguments[0];
+      if (['ArrowFunctionExpression', 'FunctionExpression'].includes(firstArg.type)) {
+        firstArg.body = {
+          type: 'BlockStatement',
+          body: []
+        };
+        delete firstArg.leadingComments;
+        delete firstArg.innerComments;
+        delete firstArg.trailingComments;
+      }
+    }
+  }
+  return call;
+}
+
 function simplifyHookStatement(stmt) {
+  if (!stmt) return stmt;
   if (stmt.type === 'ExpressionStatement' && isHookCall(stmt.expression)) {
-    const call = stmt.expression;
-    const calleeName = call.callee.type === 'Identifier' ? call.callee.name : call.callee.property?.name || '';
-    if (['useEffect', 'useLayoutEffect', 'useInsertionEffect', 'useCallback', 'useMemo'].includes(calleeName)) {
-      if (call.arguments.length > 0) {
-        const firstArg = call.arguments[0];
-        if (['ArrowFunctionExpression', 'FunctionExpression'].includes(firstArg.type)) {
-          firstArg.body = {
-            type: 'BlockStatement',
-            body: []
-          };
-        }
+    simplifyHookCall(stmt.expression);
+  } else if (stmt.type === 'VariableDeclaration') {
+    for (const decl of stmt.declarations) {
+      if (decl.init && isHookCall(decl.init)) {
+        simplifyHookCall(decl.init);
       }
     }
   }
@@ -426,6 +472,12 @@ export function skeletonizeWithAST(code, isTypeScript, maxPreserveLines = 8, isJ
 
     traverse(ast, {
       'FunctionDeclaration|FunctionExpression|ArrowFunctionExpression|ClassMethod|ObjectMethod'(astPath) {
+        // Skip direct processing of hook callbacks (handled by simplifyHookCall on the parent component)
+        if (isHookCallback(astPath)) {
+          astPath.skip();
+          return;
+        }
+
         const node = astPath.node;
         if (!node.body) return;
 
@@ -442,52 +494,72 @@ export function skeletonizeWithAST(code, isTypeScript, maxPreserveLines = 8, isJ
         if (funcName && CORE_LOGIC_REGEX.test(funcName)) {
           return;
         }
+        const isConstructor =
+          node.kind === 'constructor' ||
+          (astPath.isClassMethod() && node.key && node.key.type === 'Identifier' && node.key.name === 'constructor');
+
         const protocols = extractProtocolsFromAST(astPath);
-                let commentText = ` ...impl (${totalLines} lines)... `;
-                if (protocols.length > 0) {
-                  commentText = ` @payloads: ${protocols.join(' | ')} (truncated ${totalLines} lines) `;
-                }
+        let commentText = ` ...impl (${totalLines} lines)... `;
+        if (protocols.length > 0) {
+          commentText = ` @payloads: ${protocols.join(' | ')} (truncated ${totalLines} lines) `;
+        }
 
-                const leading = node.leadingComments;
+        const leading = node.leadingComments;
 
-                // Extract top-level React Hooks (useState, useEffect deps, useRef, custom hooks)
-                const hookStatements = [];
-                if (node.body && node.body.type === 'BlockStatement' && Array.isArray(node.body.body)) {
-                  for (const stmt of node.body.body) {
-                    if (isHookStatement(stmt)) {
-                      hookStatements.push(simplifyHookStatement(stmt));
-                    }
-                  }
-                }
+        // Extract top-level React Hooks (useState, useEffect deps, useRef, custom hooks)
+        const hookStatements = [];
+        let superCallStatement = null;
 
-                const dummyReturn = {
-                      type: 'ReturnStatement',
-                      argument: {
-                        type: 'TSAsExpression',
-                        expression: { type: 'NullLiteral' },
-                        typeAnnotation: { type: 'TSAnyKeyword' }
-                      },
-                      leadingComments: [{ type: 'CommentBlock', value: commentText }]
-                    };
+        if (node.body && node.body.type === 'BlockStatement' && Array.isArray(node.body.body)) {
+          for (const stmt of node.body.body) {
+            if (isConstructor && !superCallStatement) {
+              if (
+                stmt.type === 'ExpressionStatement' &&
+                stmt.expression &&
+                stmt.expression.type === 'CallExpression' &&
+                stmt.expression.callee.type === 'Super'
+              ) {
+                superCallStatement = stmt;
+              }
+            }
+            if (isHookStatement(stmt)) {
+              hookStatements.push(simplifyHookStatement(stmt));
+            }
+          }
+        }
 
-                    let replacementBody;
-                    if (hookStatements.length > 0) {
-                      replacementBody = {
-                        type: 'BlockStatement',
-                        body: [...hookStatements, dummyReturn]
-                      };
-                    } else {
-                      replacementBody = {
-                        type: 'BlockStatement',
-                        body: [dummyReturn]
-                      };
-                    }
+        let replacementBody;
 
-                if (astPath.isArrowFunctionExpression() && node.body.type !== 'BlockStatement') {
-                  node.body = replacementBody;
-                } else if (node.body && node.body.type === 'BlockStatement') {
-                  node.body = replacementBody;
-                }
+        if (isConstructor) {
+          // Class constructor MUST NOT return a value (causes syntax/type error in TS/JS)
+          const ctorBody = superCallStatement ? [superCallStatement] : [];
+          replacementBody = {
+            type: 'BlockStatement',
+            body: ctorBody,
+            innerComments: [{ type: 'CommentBlock', value: ` ...constructor impl (${totalLines} lines)... ` }]
+          };
+        } else {
+          const dummyReturn = {
+            type: 'ReturnStatement',
+            argument: {
+              type: 'TSAsExpression',
+              expression: { type: 'NullLiteral' },
+              typeAnnotation: { type: 'TSAnyKeyword' }
+            },
+            leadingComments: [{ type: 'CommentBlock', value: commentText }]
+          };
+
+          replacementBody = {
+            type: 'BlockStatement',
+            body: hookStatements.length > 0 ? [...hookStatements, dummyReturn] : [dummyReturn]
+          };
+        }
+
+        if (astPath.isArrowFunctionExpression() && node.body.type !== 'BlockStatement') {
+          node.body = replacementBody;
+        } else if (node.body && node.body.type === 'BlockStatement') {
+          node.body = replacementBody;
+        }
 
         if (leading) {
           node.leadingComments = leading;
@@ -965,6 +1037,48 @@ export function extractImports(code) {
   return importedPaths;
 }
 
+const RESOLVABLE_EXTENSIONS = [
+  '',
+  '.ts',
+  '.tsx',
+  '.js',
+  '.jsx',
+  '.mjs',
+  '.cjs',
+  '.mts',
+  '.cts',
+  '/index.ts',
+  '/index.tsx',
+  '/index.js',
+  '/index.jsx',
+  '/index.mjs'
+];
+
+/**
+ * Resolves a relative import path to an exact matched repository file.
+ * @param {string} fromFilePath
+ * @param {string} importPath
+ * @param {{ path: string }[]} allFiles
+ * @returns {string|null}
+ */
+export function resolveLocalImportPath(fromFilePath, importPath, allFiles) {
+  if (!importPath.startsWith('.')) return null;
+
+  const currentDir = path.dirname(fromFilePath);
+  const normalizedBase = path.normalize(path.join(currentDir, importPath)).replace(/\\/g, '/');
+
+  const fileMap = new Set(allFiles.map((f) => f.path));
+
+  for (const ext of RESOLVABLE_EXTENSIONS) {
+    const candidate = `${normalizedBase}${ext}`;
+    if (fileMap.has(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
 /**
  * Summarizes top-level exports for out-of-scope non-focused files.
  * @param {string} code
@@ -1076,15 +1190,9 @@ export async function compressRepository(files, options = {}) {
         focusFiles.add(f.path);
         const imports = extractImports(f.content);
         for (const imp of imports) {
-          if (imp.startsWith('.')) {
-            const currentDir = path.dirname(f.path);
-            const resolvedBase = path.normalize(path.join(currentDir, imp)).replace(/\\/g, '/');
-            for (const candidate of files) {
-              const candidateWithoutExt = candidate.path.replace(/\.[^.]+$/, '');
-              if (candidate.path === resolvedBase || candidateWithoutExt === resolvedBase || candidate.path.startsWith(resolvedBase)) {
-                oneHopFiles.add(candidate.path);
-              }
-            }
+          const resolved = resolveLocalImportPath(f.path, imp, files);
+          if (resolved && !focusFiles.has(resolved)) {
+            oneHopFiles.add(resolved);
           }
         }
       }

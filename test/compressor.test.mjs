@@ -1,5 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { skeletonizeWithAST, summarizeCSS, optimizeHTML, optimizeSQL, extractFiles, countTokens, compressRepository } from '../src/core.mjs';
+import {
+  skeletonizeWithAST,
+  summarizeCSS,
+  optimizeHTML,
+  optimizeSQL,
+  extractFiles,
+  countTokens,
+  compressRepository,
+  resolveLocalImportPath,
+  findDefaultInputFile
+} from '../src/core.mjs';
 describe('AST Skeletonizer', () => {
   it('preserves short utility & calculation functions (<= 8 lines)', () => {
     const code = 'function calculateDamage(base, modifier) {\n  const finalVal = base * modifier;\n  return Math.max(0, finalVal);\n}';
@@ -304,5 +314,71 @@ export const IconButton = () => {
       const pos0 = result.indexOf('### File: src/module_00.ts');
       const pos24 = result.indexOf('### File: src/module_24.ts');
       expect(pos0).toBeLessThan(pos24);
+    });
+  });
+
+  describe('P0 Bug Fixes & Regression Suite', () => {
+    it('does not inject return statement into class constructor and preserves super()', () => {
+      const classCode = `
+class AuthService extends BaseService {
+  constructor(config, logger) {
+    super(config);
+    this.logger = logger;
+    this.initDatabase();
+    console.log('Heavy constructor logic that should be folded');
+  }
+}
+`;
+      const result = skeletonizeWithAST(classCode, false, 2, false);
+      expect(result).toContain('super(config);');
+      expect(result).not.toContain('return null as any;');
+      expect(result).not.toContain('Heavy constructor logic');
+    });
+
+    it('compresses useMemo and useCallback variable declarations while keeping dependency arrays', () => {
+      const hookCode = `
+export const DataViewer = ({ items, filter }) => {
+  const filteredData = useMemo(() => {
+    const intermediate = items.filter(i => i.active);
+    return intermediate.map(i => i.name);
+  }, [items, filter]);
+
+  const handleSelect = useCallback((id) => {
+    console.log('Item selected:', id);
+    dispatch({ type: 'SELECT', payload: id });
+  }, []);
+
+  return <div>{filteredData.length}</div>;
+};
+`;
+      const result = skeletonizeWithAST(hookCode, false, 2, true);
+      expect(result).toContain('const filteredData = useMemo(() => {}, [items, filter]);');
+      expect(result).toMatch(/const handleSelect = useCallback\((?:\(id\)|id) => \{\}, \[\]\);/);
+      expect(result).not.toContain('const intermediate = items.filter');
+      expect(result).not.toContain('Item selected:');
+    });
+
+    it('strictly resolves 1-hop imports avoiding prefix collisions and resolving index files', () => {
+      const allFiles = [
+        { path: 'src/auth/service.ts' },
+        { path: 'src/auth/service.test.ts' },
+        { path: 'src/auth_helper.ts' },
+        { path: 'src/utils/index.ts' },
+        { path: 'src/utils/crypto.ts' }
+      ];
+
+      const resolvedExact = resolveLocalImportPath('src/main.ts', './auth/service', allFiles);
+      expect(resolvedExact).toBe('src/auth/service.ts');
+
+      const resolvedIndex = resolveLocalImportPath('src/main.ts', './utils', allFiles);
+      expect(resolvedIndex).toBe('src/utils/index.ts');
+
+      const notFound = resolveLocalImportPath('src/main.ts', './non_existent', allFiles);
+      expect(notFound).toBeNull();
+    });
+
+    it('throws explicit error when repomix artifact is missing and autoPack is false', () => {
+      // 既存の repomix-output がカレントディレクトリに存在しても確実にテストできるように一時ディレクトリ名を指定
+      expect(() => findDefaultInputFile(false, 'non_existent_test_directory')).toThrow(/Repomix output file not found/);
     });
   });
