@@ -512,6 +512,8 @@ Options:
   -o, --output <path>              Output file path (default: repomix-optimized.md)
   -f, --focus <pattern>            Retain full source for matched paths (3-tier slicing)
   -m, --max-preserve-lines <num>   Max line threshold to preserve function body (default: 8)
+  -e, --exact-tokens               Use exact BPE tokenizer (slower, default: false)
+      --no-auto-pack               Disable automatic repomix execution if artifact is missing
   -h, --help                       Show CLI help and exit
 ```
 
