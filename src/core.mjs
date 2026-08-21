@@ -1,5 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
+import { Worker } from 'node:worker_threads';
 import { parseArgs } from 'node:util';
 import { execSync } from 'node:child_process';
 import { parse } from '@babel/parser';
@@ -18,6 +20,7 @@ const CLI_OPTIONS = {
   output: { type: 'string', short: 'o', default: 'repomix-optimized.md' },
   'max-preserve-lines': { type: 'string', short: 'm', default: '8' },
   focus: { type: 'string', short: 'f' },
+  'exact-tokens': { type: 'boolean', short: 'e', default: false },
   help: { type: 'boolean', short: 'h' }
 };
 
@@ -55,12 +58,17 @@ export function formatTokens(tokens) {
 
 let tokenizerInstance = null;
 /**
- * Accurately counts LLM tokens using the cl100k_base (GPT-4 / Claude) BPE tokenizer.
+ * Counts LLM tokens. Uses fast byte-length approximation by default (~0ms),
+ * or exact cl100k_base BPE tokenization when exact === true.
  * @param {string} text
- * @returns {number} Exact token count
+ * @param {boolean} [exact=false]
+ * @returns {number} Token count
  */
-export function countTokens(text) {
+export function countTokens(text, exact = false) {
   if (!text || typeof text !== 'string') return 0;
+  if (!exact) {
+    return Math.round(Buffer.byteLength(text, 'utf-8') / 3.8);
+  }
   if (!tokenizerInstance) {
     tokenizerInstance = getEncoding('cl100k_base');
   }
@@ -103,6 +111,7 @@ ${bold}Options:${reset}
   -o, --output <path>              Output optimized file (default: repomix-optimized.md)
   -f, --focus <pattern>            Retain full implementation for matched path/module
   -m, --max-preserve-lines <num>   Max lines to preserve full function body (default: 8)
+  -e, --exact-tokens               Use exact BPE tokenizer (slower, default: false)
   -h, --help                       Show CLI help and exit
 
 ${bold}Examples:${reset}
@@ -124,7 +133,13 @@ ${bold}Examples:${reset}
     process.exit(1);
   }
 
-  return { inputFile, outputFile: parsed.output, maxPreserveLines, focus: parsed.focus || null };
+  return {
+    inputFile,
+    outputFile: parsed.output,
+    maxPreserveLines,
+    focus: parsed.focus || null,
+    exactTokens: Boolean(parsed['exact-tokens'])
+  };
 }
 
 /**
@@ -969,12 +984,83 @@ export function summarizeExports(code) {
 }
 
 /**
+ * Transforms repository files in parallel using worker threads if file count exceeds threshold.
+ * Preserves original index order deterministically.
+ * @param {{ path: string, content: string }[]} files
+ * @param {number} maxPreserveLines
+ * @returns {Promise<{ path: string, ext: string, code: string }[]>}
+ */
+export async function transformFilesParallel(files, maxPreserveLines = 8) {
+  if (!files || files.length === 0) return [];
+
+  // Fallback to single thread for small batches to avoid worker initialization overhead
+  if (files.length <= 20) {
+    return files.map((f) => {
+      const transformed = transformFileContent(f.path, f.content, maxPreserveLines);
+      return {
+        path: f.path,
+        ext: transformed.ext,
+        code: transformed.code
+      };
+    });
+  }
+
+  const numCPUs = os.cpus()?.length || 4;
+  const workerCount = Math.min(numCPUs, Math.ceil(files.length / 10));
+  const chunkSize = Math.ceil(files.length / workerCount);
+
+  const chunks = [];
+  for (let i = 0; i < workerCount; i++) {
+    const start = i * chunkSize;
+    const end = Math.min(start + chunkSize, files.length);
+    if (start < end) {
+      const items = files.slice(start, end).map((file, localIdx) => ({
+        index: start + localIdx,
+        path: file.path,
+        content: file.content
+      }));
+      chunks.push(items);
+    }
+  }
+
+  const workerUrl = new URL('./worker.mjs', import.meta.url);
+  const workerPromises = chunks.map((chunk) => {
+    return new Promise((resolve, reject) => {
+      const worker = new Worker(workerUrl, {
+        workerData: { items: chunk, maxPreserveLines }
+      });
+      worker.on('message', (results) => resolve(results));
+      worker.on('error', (err) => reject(err));
+      worker.on('exit', (code) => {
+        if (code !== 0) {
+          reject(new Error(`Worker stopped with exit code ${code}`));
+        }
+      });
+    });
+  });
+
+  const chunkResults = await Promise.all(workerPromises);
+  const allResults = new Array(files.length);
+  for (const resList of chunkResults) {
+    for (const res of resList) {
+      allResults[res.index] = {
+        path: res.path,
+        ext: res.ext,
+        code: res.code
+      };
+    }
+  }
+
+  return allResults;
+}
+
+/**
  * Compresses an array of repository files with optional focus filtering.
  * @param {{ path: string, content: string }[]} files
  * @param {{ focus?: string|null, maxPreserveLines?: number }} options
- * @returns {string}
+ * @returns {Promise<string>}
  */
-export function compressRepository(files, options = {}) {
+export async function compressRepository(files, options = {}) {
   const { focus = null, maxPreserveLines = 8 } = options;
   const sections = [
     `[SEMANTIC REPOSITORY SKELETON CONTEXT]\n  Optimized for LLM reasoning & architectural analysis.\n========================================\n\n`
@@ -1004,7 +1090,15 @@ export function compressRepository(files, options = {}) {
       }
     }
 
-    // 2. Synthesize 3-tier contextual compression
+    // 2. Transform 1-hop files in parallel if needed
+    const oneHopFilesList = files.filter((f) => oneHopFiles.has(f.path) && !focusFiles.has(f.path));
+    const transformedOneHop = await transformFilesParallel(oneHopFilesList, maxPreserveLines);
+    const transformedMap = new Map();
+    for (const item of transformedOneHop) {
+      transformedMap.set(item.path, item);
+    }
+
+    // 3. Synthesize 3-tier contextual compression
     for (const file of files) {
       const ext = path.extname(file.path).toLowerCase();
       const lang = ext ? ext.replace(/^\./, '') : '';
@@ -1014,7 +1108,7 @@ export function compressRepository(files, options = {}) {
         sections.push(`### File: ${file.path} [FOCUS - FULL IMPLEMENTATION]\n\`\`\`\`${lang}\n${file.content.trim()}\n\`\`\`\`\n\n`);
       } else if (oneHopFiles.has(file.path)) {
         // Tier 2: Skeletonized 1-hop dependency
-        const transformed = transformFileContent(file.path, file.content, maxPreserveLines);
+        const transformed = transformedMap.get(file.path) || transformFileContent(file.path, file.content, maxPreserveLines);
         sections.push(`### File: ${file.path} [1-HOP DEPENDENCY - SKELETON]\n\`\`\`\`${lang}\n${transformed.code}\n\`\`\`\`\n\n`);
       } else {
         // Tier 3: Minimal export summary
@@ -1023,19 +1117,20 @@ export function compressRepository(files, options = {}) {
       }
     }
   } else {
-    // Normal full skeleton mode
-    for (const file of files) {
-      const transformed = transformFileContent(file.path, file.content, maxPreserveLines);
-      const lang = transformed.ext ? transformed.ext.replace(/^\./, '') : '';
-      sections.push(`### File: ${file.path}\n\`\`\`\`${lang}\n${transformed.code}\n\`\`\`\`\n\n`);
+    const transformedList = await transformFilesParallel(files, maxPreserveLines);
+    for (const item of transformedList) {
+      const lang = item.ext ? item.ext.replace(/^\./, '') : '';
+      sections.push(`### File: ${item.path}\n\`\`\`\`${lang}\n${item.code}\n\`\`\`\`\n\n`);
     }
   }
 
   return sections.join('');
 }
 
+const ARTIFACT_IGNORE_REGEX = /repomix-(?:optimized|output)/i;
+
 export async function main() {
-  const { inputFile, outputFile, maxPreserveLines, focus } = resolveConfig();
+  const { inputFile, outputFile, maxPreserveLines, focus, exactTokens } = resolveConfig();
   const startTime = performance.now();
 
   if (!fs.existsSync(inputFile)) {
@@ -1044,17 +1139,17 @@ export async function main() {
 
   const rawContent = fs.readFileSync(inputFile, 'utf-8');
   const inputBytes = Buffer.byteLength(rawContent, 'utf-8');
-  const inputTokens = countTokens(rawContent);
+  const inputTokens = countTokens(rawContent, exactTokens);
 
-  const files = extractFiles(rawContent, inputFile);
-  const optimizedContent = compressRepository(files, { focus, maxPreserveLines });
+  const rawFiles = extractFiles(rawContent, inputFile);
+  const files = rawFiles.filter((f) => !ARTIFACT_IGNORE_REGEX.test(f.path));
+  const optimizedContent = await compressRepository(files, { focus, maxPreserveLines });
 
   fs.writeFileSync(outputFile, optimizedContent, 'utf-8');
 
-  // Compute exact output metrics
   const outputRaw = fs.readFileSync(outputFile, 'utf-8');
   const outputBytes = Buffer.byteLength(outputRaw, 'utf-8');
-  const outputTokens = countTokens(outputRaw);
+  const outputTokens = countTokens(outputRaw, exactTokens);
   const duration = Math.round(performance.now() - startTime);
 
   const byteReduction = (((inputBytes - outputBytes) / inputBytes) * 100).toFixed(1);
@@ -1063,8 +1158,8 @@ export async function main() {
   const savedTokens = Math.max(0, inputTokens - outputTokens);
   const estimatedSavings = ((savedTokens * 3.0) / 1_000_000).toFixed(4);
 
-  // Render high-signal execution summary to stdout
-  const labelTokens = 'LLM Tokens:'.padEnd(14);
+  const tokenModeLabel = exactTokens ? 'LLM Tokens:' : 'LLM Tokens ~:';
+  const labelTokens = tokenModeLabel.padEnd(14);
   const labelSize = 'File Size:'.padEnd(14);
   const labelSavings = 'Est. Savings:'.padEnd(14);
   const labelFocus = 'Focus Filter:'.padEnd(14);

@@ -106,7 +106,7 @@ export function createMCPServer() {
         }
         const rawContent = fs.readFileSync(inputFile, 'utf-8');
         const files = extractFiles(rawContent, inputFile);
-        const skeleton = compressRepository(files, {
+        const skeleton = await compressRepository(files, {
           focus: args.focus || null,
           maxPreserveLines: args.maxPreserveLines || 8
         });
@@ -156,7 +156,7 @@ export function createMCPServer() {
         }
         const rawContent = fs.readFileSync(inputFile, 'utf-8');
         const files = extractFiles(rawContent, inputFile);
-        const result = compressRepository(files, {
+        const result = await compressRepository(files, {
           focus: args.focus || null,
           maxPreserveLines: args.maxPreserveLines || 8
         });

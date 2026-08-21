@@ -217,11 +217,15 @@ describe('Fast-XML & JSON Extractor', () => {
   });
 
   describe('Token Counter & Cost Estimator', () => {
-    it('accurately counts tokens using js-tiktoken cl100k_base tokenizer', () => {
+    it('uses fast byte approximation by default and exact tokenization when specified', () => {
       const text = 'Hello world, this is a test repository semantic compression.';
-      const tokenCount = countTokens(text);
-      expect(tokenCount).toBeGreaterThan(0);
-      expect(typeof tokenCount).toBe('number');
+      const approxCount = countTokens(text, false);
+      const exactCount = countTokens(text, true);
+
+      expect(approxCount).toBeGreaterThan(0);
+      expect(exactCount).toBeGreaterThan(0);
+      expect(typeof approxCount).toBe('number');
+      expect(typeof exactCount).toBe('number');
     });
 
     it('handles empty string and falsy inputs safely', () => {
@@ -269,8 +273,8 @@ export const IconButton = () => {
       }
     ];
 
-    it('preserves full implementation for focused files, skeleton for 1-hop imports, and minimal summary for out-of-scope files', () => {
-      const result = compressRepository(sampleFiles, { focus: 'src/auth', maxPreserveLines: 2 });
+    it('preserves full implementation for focused files, skeleton for 1-hop imports, and minimal summary for out-of-scope files', async () => {
+      const result = await compressRepository(sampleFiles, { focus: 'src/auth', maxPreserveLines: 2 });
 
       expect(result).toContain('### File: src/auth/service.ts [FOCUS - FULL IMPLEMENTATION]');
       expect(result).toContain('const session = createSession(token);');
@@ -282,5 +286,23 @@ export const IconButton = () => {
       expect(result).toContain('### File: src/components/Button.tsx [OUT OF SCOPE - SUMMARY]');
       expect(result).toContain('Button, IconButton');
       expect(result).not.toContain('<button>Click me</button>');
+    });
+  });
+
+  describe('Worker Threads Parallel Processing', () => {
+    it('processes larger batches via worker threads while preserving deterministic file ordering', async () => {
+      const manyFiles = Array.from({ length: 25 }, (_, i) => ({
+        path: `src/module_${String(i).padStart(2, '0')}.ts`,
+        content: `export function compute${i}() {\n  const x = ${i};\n  const y = ${i + 1};\n  const z = ${i + 2};\n  return x + y + z;\n}`
+      }));
+
+      const result = await compressRepository(manyFiles, { maxPreserveLines: 1 });
+      expect(result).toContain('### File: src/module_00.ts');
+      expect(result).toContain('### File: src/module_24.ts');
+
+      // Verify strict ordering
+      const pos0 = result.indexOf('### File: src/module_00.ts');
+      const pos24 = result.indexOf('### File: src/module_24.ts');
+      expect(pos0).toBeLessThan(pos24);
     });
   });
