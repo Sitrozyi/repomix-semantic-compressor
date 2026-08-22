@@ -297,7 +297,7 @@ export const IconButton = () => {
     expect(result).toContain('### File: src/auth/service.ts [FOCUS - FULL IMPLEMENTATION]');
     expect(result).toContain('const session = createSession(token);');
 
-    expect(result).toContain('### File: src/utils/crypto.ts [1-HOP DEPENDENCY - SKELETON]');
+    expect(result).toContain('### File: src/utils/crypto.ts [DEPENDENCY - SKELETON]');
     expect(result).toContain('return null as any;');
     expect(result).not.toContain('heavy crypto logic');
 
@@ -416,5 +416,53 @@ export const DataViewer = ({ items, filter }) => {
 
   it('throws explicit error when repomix artifact is missing and autoPack is false', () => {
     expect(() => findDefaultInputFile(false, 'non_existent_test_directory')).toThrow(/Repomix output file not found/);
+  });
+
+  it('preserves private class methods (#validate) matching core logic prefix', () => {
+    const code = `
+class SecurityManager {
+  #validateToken(token) {
+    if (!token) return false;
+    if (token.isExpired) return false;
+    return true;
+  }
+}
+`;
+    const result = skeletonizeWithAST(code, false, 2, false);
+    expect(result).toContain('#validateToken(token)');
+    expect(result).toContain('if (token.isExpired) return false;');
+  });
+
+  it('correctly handles PostgreSQL Dollar-quoted strings without breaking procedure statements', () => {
+    const sql = `
+CREATE OR REPLACE FUNCTION set_timestamp()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+`;
+    const result = optimizeSQL(sql);
+    expect(result).toContain('CREATE OR REPLACE FUNCTION set_timestamp()');
+    expect(result).toContain('NEW.updated_at = NOW();');
+    expect(result).toContain('$$ LANGUAGE plpgsql;');
+  });
+
+  it('does not double-unescape XML entities in extracted source files', () => {
+    const xml = '<repomix><file path="src/test.js">const text = &quot;&amp;lt;div&amp;gt;&quot;;</file></repomix>';
+    const files = extractFiles(xml, 'repomix-output.xml');
+    expect(files).toHaveLength(1);
+    expect(files[0].content).toBe('const text = "&lt;div&gt;";');
+  });
+
+  it('resolves Windows backslash file paths and case-insensitive imports correctly', () => {
+    const allFiles = [
+      { path: 'src\\auth\\Service.ts' },
+      { path: 'src\\utils\\crypto.ts' }
+    ];
+
+    const resolved = resolveLocalImportPath('src/main.ts', './auth/service', allFiles);
+    expect(resolved).toBe('src\\auth\\Service.ts');
   });
 });

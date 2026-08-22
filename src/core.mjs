@@ -153,7 +153,7 @@ ${bold}Examples:${reset}
  * @param {string} [baseDir='.']
  * @returns {string} Path to input file
  */
-export function findDefaultInputFile(autoPack = true, baseDir = '.') {
+export function findDefaultInputFile(autoPack = true, baseDir = '.', silent = false) {
   const xmlPath = path.normalize(path.join(baseDir, 'repomix-output.xml')).replace(/\\/g, '/');
   const jsonPath = path.normalize(path.join(baseDir, 'repomix-output.json')).replace(/\\/g, '/');
 
@@ -168,19 +168,30 @@ export function findDefaultInputFile(autoPack = true, baseDir = '.') {
   }
 
   const packStart = performance.now();
-  process.stdout.write(`${styles.cyan('ℹ')}  repomix-output not found. Running "npx repomix" automatically... `);
+  // Route logs to stderr to avoid corrupting MCP JSON-RPC stdio protocol
+  if (!silent) {
+    process.stderr.write(`${styles.cyan('ℹ')}  repomix-output not found. Running "npx repomix" automatically... `);
+  }
+
   try {
-    // stdio: 'pipe' で Repomix 本体の冗長な出力を完全に抑止
-    execSync('npx repomix', { stdio: 'pipe' });
+    execSync('npx repomix', {
+      stdio: 'pipe',
+      timeout: 30000,
+      maxBuffer: 10 * 1024 * 1024
+    });
     const packDuration = ((performance.now() - packStart) / 1000).toFixed(1);
-    console.log(styles.gray(`(done in ${packDuration}s)`));
+    if (!silent) {
+      process.stderr.write(`${styles.gray(`(done in ${packDuration}s)\n`)}`);
+    }
 
     if (fs.existsSync(xmlPath)) return xmlPath;
     if (fs.existsSync(jsonPath)) return jsonPath;
     if (fs.existsSync('repomix-output.xml')) return 'repomix-output.xml';
     if (fs.existsSync('repomix-output.json')) return 'repomix-output.json';
   } catch (err) {
-    console.log();
+    if (!silent) {
+      process.stderr.write('\n');
+    }
     const errMsg = err.stderr ? err.stderr.toString().trim() : err.message;
     throw new Error(`Auto-running "npx repomix" failed: ${errMsg}`);
   }
@@ -188,20 +199,24 @@ export function findDefaultInputFile(autoPack = true, baseDir = '.') {
 }
 
 function getPayloadPropName(memPath) {
-  const obj = memPath.node.object;
-  const prop = memPath.node.property;
+  const node = memPath.node;
+  if (!node) return null;
+  const obj = node.object;
+  const prop = node.property;
 
-  if (prop.type !== 'Identifier') return null;
+  if (!prop || prop.type !== 'Identifier') return null;
   if (['type', 'action', 'role'].includes(prop.name)) return null;
 
-  // Handles payload.userId
-  if (obj.type === 'Identifier' && ['payload', 'data', 'event'].includes(obj.name)) {
+  // Handles payload.userId and payload?.userId
+  if (obj && obj.type === 'Identifier' && ['payload', 'data', 'event'].includes(obj.name)) {
     return prop.name;
   }
 
-  // Handles action.payload.userId
+  // Handles action.payload.userId and action?.payload?.userId
   if (
-    obj.type === 'MemberExpression' &&
+    obj &&
+    (obj.type === 'MemberExpression' || obj.type === 'OptionalMemberExpression') &&
+    obj.property &&
     obj.property.type === 'Identifier' &&
     ['payload', 'data'].includes(obj.property.name)
   ) {
@@ -209,6 +224,42 @@ function getPayloadPropName(memPath) {
   }
 
   return null;
+}
+
+function collectDestructuredProps(pattern, targetSet) {
+  if (!pattern) return;
+  if (pattern.type === 'ObjectPattern') {
+    for (const prop of pattern.properties) {
+      if (prop.type === 'ObjectProperty') {
+        if (prop.value.type === 'Identifier') {
+          targetSet.add(prop.value.name);
+        } else if (prop.value.type === 'ObjectPattern' || prop.value.type === 'ArrayPattern') {
+          collectDestructuredProps(prop.value, targetSet);
+        } else if (prop.value.type === 'AssignmentPattern') {
+          if (prop.value.left.type === 'Identifier') {
+            targetSet.add(prop.value.left.name);
+          } else {
+            collectDestructuredProps(prop.value.left, targetSet);
+          }
+        } else if (prop.key && prop.key.type === 'Identifier') {
+          targetSet.add(prop.key.name);
+        }
+      } else if (prop.type === 'RestElement' && prop.argument && prop.argument.type === 'Identifier') {
+        targetSet.add(`...${prop.argument.name}`);
+      }
+    }
+  } else if (pattern.type === 'ArrayPattern') {
+    for (const elem of pattern.elements) {
+      if (!elem) continue;
+      if (elem.type === 'Identifier') {
+        targetSet.add(elem.name);
+      } else if (elem.type === 'ObjectPattern' || elem.type === 'ArrayPattern') {
+        collectDestructuredProps(elem, targetSet);
+      } else if (elem.type === 'RestElement' && elem.argument && elem.argument.type === 'Identifier') {
+        targetSet.add(`...${elem.argument.name}`);
+      }
+    }
+  }
 }
 
 export function extractProtocolsFromAST(astPath) {
@@ -221,31 +272,26 @@ export function extractProtocolsFromAST(astPath) {
         const payloadProps = new Set();
 
         casePath.traverse({
-                  MemberExpression(memPath) {
-                    const propName = getPayloadPropName(memPath);
-                    if (propName) payloadProps.add(propName);
-                  },
-                  VariableDeclarator(varPath) {
-                    const init = varPath.node.init;
-                    if (!init) return;
+          'MemberExpression|OptionalMemberExpression'(memPath) {
+            const propName = getPayloadPropName(memPath);
+            if (propName) payloadProps.add(propName);
+          },
+          VariableDeclarator(varPath) {
+            const init = varPath.node.init;
+            if (!init) return;
 
-                    const isPayloadSource =
-                      (init.type === 'Identifier' && ['payload', 'data', 'event'].includes(init.name)) ||
-                      (init.type === 'MemberExpression' &&
-                        init.property.type === 'Identifier' &&
-                        ['payload', 'data'].includes(init.property.name));
+            const isPayloadSource =
+              (init.type === 'Identifier' && ['payload', 'data', 'event'].includes(init.name)) ||
+              ((init.type === 'MemberExpression' || init.type === 'OptionalMemberExpression') &&
+                init.property &&
+                init.property.type === 'Identifier' &&
+                ['payload', 'data'].includes(init.property.name));
 
-                    if (isPayloadSource && varPath.node.id.type === 'ObjectPattern') {
-                      for (const prop of varPath.node.id.properties) {
-                        if (prop.type === 'ObjectProperty' && prop.key.type === 'Identifier') {
-                          payloadProps.add(prop.key.name);
-                        } else if (prop.type === 'RestElement' && prop.argument.type === 'Identifier') {
-                          payloadProps.add(`...${prop.argument.name}`);
-                        }
-                      }
-                    }
-                  }
-                });
+            if (isPayloadSource && varPath.node.id) {
+              collectDestructuredProps(varPath.node.id, payloadProps);
+            }
+          }
+        });
 
         if (payloadProps.size > 0) {
           protocols.add(`${actionName}(${Array.from(payloadProps).join(', ')})`);
@@ -306,7 +352,7 @@ export function extractProtocolsFromAST(astPath) {
   return Array.from(protocols);
 }
 
-const CORE_LOGIC_REGEX = /^(is|has|can|should|calc|calculate|validate|check|parse|format|sanitize)[A-Z0-9_]/;
+const CORE_LOGIC_REGEX = /^#?(is|has|can|should|calc|calculate|validate|check|parse|format|sanitize)[A-Z0-9_]/;
 
 function isHookCall(callNode) {
   if (!callNode || callNode.type !== 'CallExpression') return false;
@@ -351,6 +397,7 @@ function simplifyHookCall(call) {
           type: 'BlockStatement',
           body: []
         };
+        firstArg.expression = false;
         delete firstArg.leadingComments;
         delete firstArg.innerComments;
         delete firstArg.trailingComments;
@@ -382,13 +429,17 @@ function getFunctionName(astPath) {
       return astPath.parentPath.node.id.name;
     }
     if (astPath.parentPath.isObjectProperty() || astPath.parentPath.isClassProperty()) {
-      if (astPath.parentPath.node.key && astPath.parentPath.node.key.type === 'Identifier') {
-        return astPath.parentPath.node.key.name;
+      if (astPath.parentPath.node.key) {
+        if (astPath.parentPath.node.key.type === 'Identifier') return astPath.parentPath.node.key.name;
+        if (astPath.parentPath.node.key.type === 'PrivateName' && astPath.parentPath.node.key.id) {
+          return `#${astPath.parentPath.node.key.id.name}`;
+        }
       }
     }
   }
-  if (node.key && node.key.type === 'Identifier') {
-    return node.key.name;
+  if (node.key) {
+    if (node.key.type === 'Identifier') return node.key.name;
+    if (node.key.type === 'PrivateName' && node.key.id) return `#${node.key.id.name}`;
   }
   return null;
 }
@@ -402,9 +453,12 @@ export function skeletonizeWithAST(code, isTypeScript, maxPreserveLines = 8, isJ
         isJSX ? 'jsx' : null,
         isTypeScript ? 'typescript' : null,
         ['decorators', { decoratorsBeforeExport: true }],
+        'decoratorAutoAccessors',
+        'explicitResourceManagement',
         'classProperties',
         'classPrivateProperties',
         'classPrivateMethods',
+        'classStaticBlock',
         'dynamicImport',
         'exportDefaultFrom',
         'importAttributes'
@@ -419,12 +473,22 @@ export function skeletonizeWithAST(code, isTypeScript, maxPreserveLines = 8, isJ
         const newChildren = [];
         let lastTagName = null;
         let repeatCount = 0;
+        let pendingWhitespace = [];
 
         for (const child of children) {
+          if (child.type === 'JSXText' && child.value.trim() === '') {
+            if (repeatCount > 0) {
+              continue;
+            }
+            pendingWhitespace.push(child);
+            continue;
+          }
+
           if (child.type === 'JSXElement' && child.openingElement.name.type === 'JSXIdentifier') {
             const tagName = child.openingElement.name.name;
             if (tagName === lastTagName) {
               repeatCount++;
+              pendingWhitespace = [];
               continue;
             } else {
               if (repeatCount > 0) {
@@ -435,6 +499,10 @@ export function skeletonizeWithAST(code, isTypeScript, maxPreserveLines = 8, isJ
                     innerComments: [{ type: 'CommentBlock', value: ` ...${repeatCount} repeating <${lastTagName} /> omitted... ` }]
                   }
                 });
+              }
+              if (pendingWhitespace.length > 0) {
+                newChildren.push(...pendingWhitespace);
+                pendingWhitespace = [];
               }
               lastTagName = tagName;
               repeatCount = 0;
@@ -452,6 +520,10 @@ export function skeletonizeWithAST(code, isTypeScript, maxPreserveLines = 8, isJ
               lastTagName = null;
               repeatCount = 0;
             }
+            if (pendingWhitespace.length > 0) {
+              newChildren.push(...pendingWhitespace);
+              pendingWhitespace = [];
+            }
             newChildren.push(child);
           }
         }
@@ -465,13 +537,28 @@ export function skeletonizeWithAST(code, isTypeScript, maxPreserveLines = 8, isJ
             }
           });
         }
+        if (pendingWhitespace.length > 0) {
+          newChildren.push(...pendingWhitespace);
+        }
 
         jsxPath.node.children = newChildren;
       }
     });
 
     traverse(ast, {
-      'FunctionDeclaration|FunctionExpression|ArrowFunctionExpression|ClassMethod|ObjectMethod'(astPath) {
+      'FunctionDeclaration|FunctionExpression|ArrowFunctionExpression|ClassMethod|ObjectMethod|StaticBlock'(astPath) {
+        if (astPath.isStaticBlock()) {
+          const node = astPath.node;
+          const startLine = node.loc ? node.loc.start.line : 0;
+          const endLine = node.loc ? node.loc.end.line : 0;
+          const totalLines = endLine - startLine + 1;
+          if (node.loc && totalLines <= maxPreserveLines) return;
+          node.body = [];
+          node.innerComments = [{ type: 'CommentBlock', value: ` ...static block impl (${totalLines} lines)... ` }];
+          astPath.skip();
+          return;
+        }
+
         // Skip direct processing of hook callbacks (handled by simplifyHookCall on the parent component)
         if (isHookCallback(astPath)) {
           astPath.skip();
@@ -497,6 +584,7 @@ export function skeletonizeWithAST(code, isTypeScript, maxPreserveLines = 8, isJ
         const isConstructor =
           node.kind === 'constructor' ||
           (astPath.isClassMethod() && node.key && node.key.type === 'Identifier' && node.key.name === 'constructor');
+        const isSetter = node.kind === 'set';
 
         const protocols = extractProtocolsFromAST(astPath);
         let commentText = ` ...impl (${totalLines} lines)... `;
@@ -506,7 +594,6 @@ export function skeletonizeWithAST(code, isTypeScript, maxPreserveLines = 8, isJ
 
         const leading = node.leadingComments;
 
-        // Extract top-level React Hooks (useState, useEffect deps, useRef, custom hooks)
         const hookStatements = [];
         let superCallStatement = null;
 
@@ -531,15 +618,19 @@ export function skeletonizeWithAST(code, isTypeScript, maxPreserveLines = 8, isJ
         let replacementBody;
 
         if (isConstructor) {
-          // Class constructor MUST NOT return a value (causes syntax/type error in TS/JS)
           const ctorBody = superCallStatement ? [superCallStatement] : [];
           replacementBody = {
             type: 'BlockStatement',
             body: ctorBody,
             innerComments: [{ type: 'CommentBlock', value: ` ...constructor impl (${totalLines} lines)... ` }]
           };
+        } else if (isSetter) {
+          replacementBody = {
+            type: 'BlockStatement',
+            body: [],
+            innerComments: [{ type: 'CommentBlock', value: commentText }]
+          };
         } else {
-
           const returnExpression = isTypeScript
             ? {
                 type: 'TSAsExpression',
@@ -570,6 +661,8 @@ export function skeletonizeWithAST(code, isTypeScript, maxPreserveLines = 8, isJ
         if (leading) {
           node.leadingComments = leading;
         }
+
+        astPath.skip();
       }
     });
 
@@ -687,7 +780,9 @@ export function summarizeCSS(cssCode) {
         const selector = node.selector ? node.selector.trim() : '';
         if (!selector) continue;
 
-        if (selector === ':root' || selector.includes('--')) {
+        // Isolate root-level custom properties without misinterpreting BEM class names
+        const isRootScope = selector === ':root' || selector === ':host' || selector.startsWith(':root');
+        if (isRootScope) {
           const varDecls = [];
           node.walkDecls((decl) => {
             if (decl.prop.startsWith('--')) {
@@ -745,6 +840,7 @@ export function splitSQLStatements(sqlCode) {
   let inBacktick = false;
   let inLineComment = false;
   let inBlockComment = false;
+  let dollarTag = null;
 
   for (let i = 0; i < sqlCode.length; i++) {
     const char = sqlCode[i];
@@ -764,6 +860,17 @@ export function splitSQLStatements(sqlCode) {
         current += nextChar;
         i++;
         inBlockComment = false;
+      }
+      continue;
+    }
+
+    if (dollarTag !== null) {
+      if (char === '$' && sqlCode.startsWith(dollarTag, i)) {
+        current += dollarTag;
+        i += dollarTag.length - 1;
+        dollarTag = null;
+      } else {
+        current += char;
       }
       continue;
     }
@@ -824,6 +931,26 @@ export function splitSQLStatements(sqlCode) {
       current += char + nextChar;
       i++;
       continue;
+    }
+
+    if (char === '$') {
+      let tagEnd = -1;
+      for (let j = i + 1; j < sqlCode.length && j <= i + 64; j++) {
+        const c = sqlCode[j];
+        if (c === '$') {
+          tagEnd = j;
+          break;
+        }
+        if (!(/[a-zA-Z0-9_]/).test(c)) {
+          break;
+        }
+      }
+      if (tagEnd !== -1) {
+        dollarTag = sqlCode.substring(i, tagEnd + 1);
+        current += dollarTag;
+        i = tagEnd;
+        continue;
+      }
     }
 
     if (char === "'") {
@@ -1031,66 +1158,142 @@ export function transformFileContent(filePath, originalCode, maxPreserveLines) {
 }
 
 /**
- * Extracts import and require paths from source code.
+ * Extracts import and require paths from source code using AST parsing with regex fallback.
  * @param {string} code
  * @returns {string[]}
  */
 export function extractImports(code) {
-  const importedPaths = [];
-  const importRegex = /(?:import\s+(?:[\s\S]*?from\s+)?['"]([^'"]+)['"]|export\s+[\s\S]*?from\s+['"]([^'"]+)['"]|require\s*\(\s*['"]([^'"]+)['"]\s*\))/g;
-  let match;
-  while ((match = importRegex.exec(code)) !== null) {
-    importedPaths.push(match[1] || match[2] || match[3]);
+  const importedPaths = new Set();
+  try {
+    const ast = parse(code, {
+      sourceType: 'unambiguous',
+      errorRecovery: true,
+      plugins: [
+        'jsx',
+        'typescript',
+        ['decorators', { decoratorsBeforeExport: true }],
+        'decoratorAutoAccessors',
+        'explicitResourceManagement',
+        'classProperties',
+        'classPrivateProperties',
+        'classPrivateMethods',
+        'classStaticBlock',
+        'dynamicImport',
+        'exportDefaultFrom',
+        'importAttributes'
+      ]
+    });
+
+    traverse(ast, {
+      ImportDeclaration(importPath) {
+        if (importPath.node.source && importPath.node.source.value) {
+          importedPaths.add(importPath.node.source.value);
+        }
+      },
+      ExportNamedDeclaration(exportPath) {
+        if (exportPath.node.source && exportPath.node.source.value) {
+          importedPaths.add(exportPath.node.source.value);
+        }
+      },
+      ExportAllDeclaration(exportPath) {
+        if (exportPath.node.source && exportPath.node.source.value) {
+          importedPaths.add(exportPath.node.source.value);
+        }
+      },
+      CallExpression(callPath) {
+        const callee = callPath.node.callee;
+        if (callee.type === 'Identifier' && callee.name === 'require') {
+          const arg = callPath.node.arguments[0];
+          if (arg && arg.type === 'StringLiteral') {
+            importedPaths.add(arg.value);
+          }
+        }
+        if (callee.type === 'Import') {
+          const arg = callPath.node.arguments[0];
+          if (arg && arg.type === 'StringLiteral') {
+            importedPaths.add(arg.value);
+          }
+        }
+      }
+    });
+
+    return Array.from(importedPaths);
+  } catch {
+    const importRegex = /(?:import\s+(?:[^\n\r;]+?from\s+)?['"]([^'"]+)['"]|export\s+[^\n\r;]+?from\s+['"]([^'"]+)['"]|require\s*\(\s*['"]([^'"]+)['"]\s*\))/g;
+    let match;
+    while ((match = importRegex.exec(code)) !== null) {
+      const p = match[1] || match[2] || match[3];
+      if (p) importedPaths.add(p);
+    }
+    return Array.from(importedPaths);
   }
-  return importedPaths;
 }
 
 const RESOLVABLE_EXTENSIONS = [
   '',
   '.ts',
   '.tsx',
+  '.d.ts',
   '.js',
   '.jsx',
   '.mjs',
   '.cjs',
   '.mts',
   '.cts',
+  '.json',
   '/index.ts',
   '/index.tsx',
+  '/index.d.ts',
   '/index.js',
   '/index.jsx',
-  '/index.mjs'
+  '/index.mjs',
+  '/index.json'
 ];
 
 /**
- * Resolves relative (./, ../) and aliased (@/, ~/) import paths to an exact matched repository file.
+ * Resolves relative, aliased, subpath, and monorepo workspace package imports.
  * @param {string} fromFilePath
  * @param {string} importPath
  * @param {{ path: string }[]} allFiles
  * @returns {string|null}
  */
 export function resolveLocalImportPath(fromFilePath, importPath, allFiles) {
-  const fileMap = new Set(allFiles.map((f) => f.path));
+  const fileMap = new Map();
+  for (const f of allFiles) {
+    const normalized = path.normalize(f.path).replace(/\\/g, '/');
+    fileMap.set(normalized, f.path);
+    fileMap.set(normalized.toLowerCase(), f.path);
+  }
+
+  const normalizedFromFile = path.normalize(fromFilePath).replace(/\\/g, '/');
   const candidateBases = [];
 
   if (importPath.startsWith('.')) {
-    const currentDir = path.dirname(fromFilePath);
+    const currentDir = path.dirname(normalizedFromFile);
     candidateBases.push(path.normalize(path.join(currentDir, importPath)).replace(/\\/g, '/'));
-  }
-
-  else if (importPath.startsWith('@/') || importPath.startsWith('~/')) {
+  } else if (importPath.startsWith('@/') || importPath.startsWith('~/')) {
     const subPath = importPath.slice(2);
     candidateBases.push(path.normalize(subPath).replace(/\\/g, '/'));
     candidateBases.push(path.normalize(path.join('src', subPath)).replace(/\\/g, '/'));
+  } else if (importPath.startsWith('#')) {
+    const subPath = importPath.slice(1);
+    candidateBases.push(path.normalize(subPath).replace(/\\/g, '/'));
+    candidateBases.push(path.normalize(path.join('src', subPath)).replace(/\\/g, '/'));
   } else {
-    return null;
+    candidateBases.push(path.normalize(importPath).replace(/\\/g, '/'));
+    candidateBases.push(path.normalize(path.join('src', importPath)).replace(/\\/g, '/'));
+    candidateBases.push(path.normalize(path.join('packages', importPath)).replace(/\\/g, '/'));
   }
 
   for (const base of candidateBases) {
     for (const ext of RESOLVABLE_EXTENSIONS) {
       const candidate = `${base}${ext}`;
       if (fileMap.has(candidate)) {
-        return candidate;
+        return fileMap.get(candidate);
+      }
+      const lower = candidate.toLowerCase();
+      if (fileMap.has(lower)) {
+        return fileMap.get(lower);
       }
     }
   }
@@ -1099,20 +1302,78 @@ export function resolveLocalImportPath(fromFilePath, importPath, allFiles) {
 }
 
 /**
- * Summarizes top-level exports for out-of-scope non-focused files.
+ * Summarizes top-level exports for out-of-scope non-focused files using AST analysis.
  * @param {string} code
  * @returns {string}
  */
 export function summarizeExports(code) {
-  const exports = [];
-  const exportRegex = /export\s+(?:default\s+)?(?:async\s+)?(?:function\*?|class|const|let|var|interface|type|enum)\s+([a-zA-Z0-9_$]+)/g;
-  let m;
-  while ((m = exportRegex.exec(code)) !== null) {
-    exports.push(m[1]);
+  const exports = new Set();
+  try {
+    const ast = parse(code, {
+      sourceType: 'unambiguous',
+      errorRecovery: true,
+      plugins: [
+        'jsx',
+        'typescript',
+        ['decorators', { decoratorsBeforeExport: true }],
+        'decoratorAutoAccessors',
+        'explicitResourceManagement',
+        'classProperties',
+        'classPrivateProperties',
+        'classPrivateMethods',
+        'classStaticBlock',
+        'dynamicImport',
+        'exportDefaultFrom',
+        'importAttributes'
+      ]
+    });
+
+    traverse(ast, {
+      ExportNamedDeclaration(exportPath) {
+        if (exportPath.node.declaration) {
+          const decl = exportPath.node.declaration;
+          if (decl.id && decl.id.name) {
+            exports.add(decl.id.name);
+          } else if (decl.declarations && Array.isArray(decl.declarations)) {
+            for (const d of decl.declarations) {
+              if (d.id && d.id.type === 'Identifier') {
+                exports.add(d.id.name);
+              }
+            }
+          }
+        }
+        if (exportPath.node.specifiers && Array.isArray(exportPath.node.specifiers)) {
+          for (const spec of exportPath.node.specifiers) {
+            if (spec.exported && spec.exported.name) {
+              exports.add(spec.exported.name);
+            }
+          }
+        }
+      },
+      ExportDefaultDeclaration(exportPath) {
+        const decl = exportPath.node.declaration;
+        if (decl.id && decl.id.name) {
+          exports.add(`default (${decl.id.name})`);
+        } else {
+          exports.add('default');
+        }
+      }
+    });
+
+    if (exports.size > 0) {
+      return `// Exported signatures: ${Array.from(exports).join(', ')}\n// [Non-focused implementation omitted]`;
+    }
+  } catch {
+    const exportRegex = /export\s+(?:default\s+)?(?:async\s+)?(?:function\*?|class|const|let|var|interface|type|enum)\s+([a-zA-Z0-9_$]+)/g;
+    let m;
+    while ((m = exportRegex.exec(code)) !== null) {
+      exports.add(m[1]);
+    }
+    if (exports.size > 0) {
+      return `// Exported signatures: ${Array.from(exports).join(', ')}\n// [Non-focused implementation omitted]`;
+    }
   }
-  if (exports.length > 0) {
-    return `// Exported signatures: ${exports.join(', ')}\n// [Non-focused implementation omitted]`;
-  }
+
   return `// [Non-focused implementation omitted]`;
 }
 
@@ -1139,7 +1400,7 @@ export async function transformFilesParallel(files, maxPreserveLines = 8) {
   }
 
   const numCPUs = os.cpus()?.length || 4;
-  const workerCount = Math.min(numCPUs, Math.ceil(files.length / 10));
+  const workerCount = Math.min(4, Math.min(numCPUs, Math.ceil(files.length / 10)));
   const chunkSize = Math.ceil(files.length / workerCount);
 
   const chunks = [];
@@ -1157,38 +1418,63 @@ export async function transformFilesParallel(files, maxPreserveLines = 8) {
   }
 
   const workerUrl = new URL('./worker.mjs', import.meta.url);
-  const workerPromises = chunks.map((chunk) => {
-    return new Promise((resolve, reject) => {
-      const worker = new Worker(workerUrl, {
-        workerData: { items: chunk, maxPreserveLines }
-      });
-      worker.on('message', (results) => resolve(results));
-      worker.on('error', (err) => reject(err));
-      worker.on('exit', (code) => {
-        if (code !== 0) {
-          reject(new Error(`Worker stopped with exit code ${code}`));
-        }
+  const activeWorkers = [];
+
+  try {
+    // Fall back to sequential execution on the main thread if any worker fails
+    const workerPromises = chunks.map((chunk) => {
+      return new Promise((resolve) => {
+        const worker = new Worker(workerUrl, {
+          workerData: { items: chunk, maxPreserveLines }
+        });
+        activeWorkers.push(worker);
+        worker.on('message', (results) => resolve(results));
+        worker.on('error', () => {
+          // Fallback chunk execution on main thread
+          const fallback = chunk.map((item) => {
+            const transformed = transformFileContent(item.path, item.content, maxPreserveLines);
+            return { index: item.index, path: item.path, ext: transformed.ext, code: transformed.code };
+          });
+          resolve(fallback);
+        });
+        worker.on('exit', (code) => {
+          if (code !== 0) {
+            const fallback = chunk.map((item) => {
+              const transformed = transformFileContent(item.path, item.content, maxPreserveLines);
+              return { index: item.index, path: item.path, ext: transformed.ext, code: transformed.code };
+            });
+            resolve(fallback);
+          }
+        });
       });
     });
-  });
 
-  const chunkResults = await Promise.all(workerPromises);
-  const allResults = new Array(files.length);
-  for (const resList of chunkResults) {
-    for (const res of resList) {
-      allResults[res.index] = {
-        path: res.path,
-        ext: res.ext,
-        code: res.code
-      };
+    const chunkResults = await Promise.all(workerPromises);
+    const allResults = new Array(files.length);
+    for (const resList of chunkResults) {
+      for (const res of resList) {
+        allResults[res.index] = {
+          path: res.path,
+          ext: res.ext,
+          code: res.code
+        };
+      }
     }
-  }
 
-  return allResults;
+    return allResults;
+  } finally {
+    await Promise.allSettled(activeWorkers.map((w) => w.terminate()));
+  }
+}
+
+const TYPE_CONTRACT_REGEX = /(?:^|[\\/])(?:types?|interfaces?|models?|schemas?|constants?|contracts?|entities?)(?:[\\/.]|\.d\.ts$)/i;
+
+function isTypeOrContractDefinition(filePath) {
+  return TYPE_CONTRACT_REGEX.test(filePath) || filePath.endsWith('.d.ts');
 }
 
 /**
- * Compresses an array of repository files with optional focus filtering.
+ * Compresses an array of repository files with transitive dependency resolution.
  * @param {{ path: string, content: string }[]} files
  * @param {{ focus?: string|null, maxPreserveLines?: number }} options
  * @returns {Promise<string>}
@@ -1200,45 +1486,60 @@ export async function compressRepository(files, options = {}) {
   ];
 
   if (focus) {
+    const fileContentMap = new Map(files.map((f) => [f.path, f.content]));
     const focusFiles = new Set();
-    const oneHopFiles = new Set();
+    const dependencyFiles = new Set();
+    const visited = new Set();
+    const traversalQueue = [];
 
-    // 1. Identify focus files and their 1-hop dependencies
     for (const f of files) {
       if (f.path.includes(focus)) {
         focusFiles.add(f.path);
-        const imports = extractImports(f.content);
-        for (const imp of imports) {
-          const resolved = resolveLocalImportPath(f.path, imp, files);
-          if (resolved && !focusFiles.has(resolved)) {
-            oneHopFiles.add(resolved);
+        visited.add(f.path);
+        traversalQueue.push({ path: f.path, depth: 0 });
+      }
+    }
+
+    while (traversalQueue.length > 0) {
+      const current = traversalQueue.shift();
+      const content = fileContentMap.get(current.path);
+      if (!content) continue;
+
+      const imports = extractImports(content);
+      for (const imp of imports) {
+        const resolved = resolveLocalImportPath(current.path, imp, files);
+        if (!resolved || visited.has(resolved)) continue;
+
+        const isDirect = current.depth === 0;
+        const isTypeContract = isTypeOrContractDefinition(resolved);
+
+        if (isDirect || isTypeContract) {
+          visited.add(resolved);
+          if (!focusFiles.has(resolved)) {
+            dependencyFiles.add(resolved);
           }
+          traversalQueue.push({ path: resolved, depth: current.depth + 1 });
         }
       }
     }
 
-    // 2. Transform 1-hop files in parallel if needed
-    const oneHopFilesList = files.filter((f) => oneHopFiles.has(f.path) && !focusFiles.has(f.path));
-    const transformedOneHop = await transformFilesParallel(oneHopFilesList, maxPreserveLines);
+    const dependencyFilesList = files.filter((f) => dependencyFiles.has(f.path));
+    const transformedDependencies = await transformFilesParallel(dependencyFilesList, maxPreserveLines);
     const transformedMap = new Map();
-    for (const item of transformedOneHop) {
+    for (const item of transformedDependencies) {
       transformedMap.set(item.path, item);
     }
 
-    // 3. Synthesize 3-tier contextual compression
     for (const file of files) {
       const ext = path.extname(file.path).toLowerCase();
       const lang = ext ? ext.replace(/^\./, '') : '';
 
       if (focusFiles.has(file.path)) {
-        // Tier 1: Full implementation
         sections.push(`### File: ${file.path} [FOCUS - FULL IMPLEMENTATION]\n\`\`\`\`${lang}\n${file.content.trim()}\n\`\`\`\`\n\n`);
-      } else if (oneHopFiles.has(file.path)) {
-        // Tier 2: Skeletonized 1-hop dependency
+      } else if (dependencyFiles.has(file.path)) {
         const transformed = transformedMap.get(file.path) || transformFileContent(file.path, file.content, maxPreserveLines);
-        sections.push(`### File: ${file.path} [1-HOP DEPENDENCY - SKELETON]\n\`\`\`\`${lang}\n${transformed.code}\n\`\`\`\`\n\n`);
+        sections.push(`### File: ${file.path} [DEPENDENCY - SKELETON]\n\`\`\`\`${lang}\n${transformed.code}\n\`\`\`\`\n\n`);
       } else {
-        // Tier 3: Minimal export summary
         const summary = summarizeExports(file.content);
         sections.push(`### File: ${file.path} [OUT OF SCOPE - SUMMARY]\n\`\`\`\`${lang}\n${summary}\n\`\`\`\`\n\n`);
       }
@@ -1272,7 +1573,10 @@ export async function main() {
   const files = rawFiles.filter((f) => !ARTIFACT_IGNORE_REGEX.test(f.path));
   const optimizedContent = await compressRepository(files, { focus, maxPreserveLines });
 
-  fs.writeFileSync(outputFile, optimizedContent, 'utf-8');
+  // Stream output to disk with backpressure handling to prevent memory spikes
+  const writeStream = fs.createWriteStream(outputFile, { encoding: 'utf-8' });
+  await writeToStream(writeStream, optimizedContent);
+  await new Promise((resolve) => writeStream.end(resolve));
 
   const outputRaw = fs.readFileSync(outputFile, 'utf-8');
   const outputBytes = Buffer.byteLength(outputRaw, 'utf-8');

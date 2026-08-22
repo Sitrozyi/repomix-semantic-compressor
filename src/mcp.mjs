@@ -1,8 +1,20 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { extractFiles, compressRepository, findDefaultInputFile } from './core.mjs';
+
+// Prevent arbitrary file access outside the current working directory
+function sanitizeInputPath(targetPath, baseDir = process.cwd()) {
+  const resolvedBase = path.resolve(baseDir);
+  const resolvedTarget = path.resolve(baseDir, targetPath);
+  const rel = path.relative(resolvedBase, resolvedTarget);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw new Error('Access denied: Path traversal detected outside root directory.');
+  }
+  return resolvedTarget;
+}
 
 /**
  * Creates and configures the Repomix Compressor MCP Server instance.
@@ -97,7 +109,15 @@ export function createMCPServer() {
 
     try {
       if (name === 'get_repo_skeleton') {
-        const inputFile = args.input || findDefaultInputFile();
+        let inputFile;
+        try {
+          inputFile = args.input ? sanitizeInputPath(args.input) : findDefaultInputFile(false, '.', true);
+        } catch (err) {
+          return {
+            content: [{ type: 'text', text: `Error: ${err.message}` }],
+            isError: true
+          };
+        }
         if (!fs.existsSync(inputFile)) {
           return {
             content: [{ type: 'text', text: `Error: Repomix file not found: ${inputFile}` }],
@@ -116,7 +136,15 @@ export function createMCPServer() {
       }
 
       if (name === 'get_file_implementation') {
-        const inputFile = args.input || findDefaultInputFile();
+        let inputFile;
+        try {
+          inputFile = args.input ? sanitizeInputPath(args.input) : findDefaultInputFile(false, '.', true);
+        } catch (err) {
+          return {
+            content: [{ type: 'text', text: `Error: ${err.message}` }],
+            isError: true
+          };
+        }
         if (!fs.existsSync(inputFile)) {
           return {
             content: [{ type: 'text', text: `Error: Repomix file not found: ${inputFile}` }],
@@ -126,7 +154,13 @@ export function createMCPServer() {
         const rawContent = fs.readFileSync(inputFile, 'utf-8');
         const files = extractFiles(rawContent, inputFile);
         const targetPath = args.path;
-        const matched = files.find((f) => f.path === targetPath || f.path.endsWith(targetPath) || f.path.includes(targetPath));
+        const normTarget = path.normalize(targetPath).replace(/\\/g, '/').replace(/^\.\//, '');
+
+        // Exact matching to prevent ambiguous resolution and path traversal
+        const matched = files.find((f) => {
+          const norm = path.normalize(f.path).replace(/\\/g, '/').replace(/^\.\//, '');
+          return norm === normTarget;
+        });
 
         if (!matched) {
           return {
@@ -146,8 +180,17 @@ export function createMCPServer() {
       }
 
       if (name === 'compress_repomix_file') {
-        const inputFile = args.input || findDefaultInputFile();
-        const outputFile = args.output || 'repomix-optimized.md';
+        let inputFile;
+        let outputFile;
+        try {
+          inputFile = args.input ? sanitizeInputPath(args.input) : findDefaultInputFile(false, '.', true);
+          outputFile = sanitizeInputPath(args.output || 'repomix-optimized.md');
+        } catch (err) {
+          return {
+            content: [{ type: 'text', text: `Error: ${err.message}` }],
+            isError: true
+          };
+        }
         if (!fs.existsSync(inputFile)) {
           return {
             content: [{ type: 'text', text: `Error: Repomix file not found: ${inputFile}` }],
