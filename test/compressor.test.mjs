@@ -10,6 +10,7 @@ import {
   resolveLocalImportPath,
   findDefaultInputFile
 } from '../src/core.mjs';
+
 describe('AST Skeletonizer', () => {
   it('preserves short utility & calculation functions (<= 8 lines)', () => {
     const code = 'function calculateDamage(base, modifier) {\n  const finalVal = base * modifier;\n  return Math.max(0, finalVal);\n}';
@@ -80,95 +81,60 @@ export const ItemList = () => {
     expect(result).not.toContain('console.log("clicked");');
   });
 
+  it('injects valid return null in pure JS and avoids TypeScript TSAsExpression syntax error', () => {
+    const jsCode = 'function processData(items) {\n  const mapped = items.map(x => x * 2);\n  console.log(mapped);\n  return mapped;\n}';
+    const result = skeletonizeWithAST(jsCode, false, 2, false);
+    expect(result).toContain('return null;');
+    expect(result).not.toContain('return null as any;');
+  });
+
   it('correctly parses generic arrow functions in pure TypeScript (.ts without JSX) and injects return null as any', () => {
-      const tsCode = 'export const identity = <T>(val: T): T => {\n  const logged = val;\n  console.log(logged);\n  return logged;\n};';
-      const result = skeletonizeWithAST(tsCode, true, 2, false);
-      expect(result).toMatch(/export const identity = <T,?>\(val: T\): T =>/);
-      expect(result).toContain('return null as any;');
-    });
-
-    it('handles nested CSS with @media and CSS nesting without syntax errors', () => {
-      const nestedCSS = `
-  :root { --main-bg: #000; }
-  @media (max-width: 768px) {
-    .sidebar {
-      display: flex;
-      & > .nav-item {
-        position: absolute;
-      }
-    }
-  }
-  .card {
-    color: red;
-  }
-  `;
-      const result = summarizeCSS(nestedCSS);
-      expect(result).toContain('--main-bg: #000');
-      expect(result).toContain('@media (max-width: 768px)');
-      expect(result).toContain('display: flex');
-      expect(result).toContain('position: absolute');
-      expect(result).toContain('.card');
-    });
-
-    it('handles SQL queries with semicolons inside string literals without breaking statements', () => {
-      const sql = `
-  CREATE TABLE logs (
-    id INT PRIMARY KEY,
-    message TEXT
-  );
-
-  INSERT INTO logs (id, message) VALUES (1, 'error; retry needed; code=500');
-  INSERT INTO logs (id, message) VALUES (2, 'success; all good');
-  INSERT INTO logs (id, message) VALUES (3, 'warning; check syntax');
-  `;
-      const result = optimizeSQL(sql);
-      expect(result).toContain('CREATE TABLE logs');
-      expect(result).toContain("INSERT INTO logs (id, message) VALUES (1, 'error; retry needed; code=500');");
-      expect(result).toContain("INSERT INTO logs (id, message) VALUES (2, 'success; all good');");
-      expect(result).not.toContain("INSERT INTO logs (id, message) VALUES (3, 'warning; check syntax');");
-      expect(result).toContain('/* ... 1 redundant INSERT statements omitted for logs ... */');
-    });
+    const tsCode = 'export const identity = <T>(val: T): T => {\n  const logged = val;\n  console.log(logged);\n  return logged;\n};';
+    const result = skeletonizeWithAST(tsCode, true, 2, false);
+    expect(result).toMatch(/export const identity = <T,?>\(val: T\): T =>/);
+    expect(result).toContain('return null as any;');
+  });
 
   it('extracts Action payloads from object destructuring', () => {
-      const code = `
-  function gameReducer(state, action) {
-    switch (action.type) {
-      case 'CARD_PLAYED': {
-        const { cardId, targetSlot, ...extra } = action.payload;
-        break;
-      }
+    const code = `
+function gameReducer(state, action) {
+  switch (action.type) {
+    case 'CARD_PLAYED': {
+      const { cardId, targetSlot, ...extra } = action.payload;
+      break;
     }
   }
-  `;
-      const result = skeletonizeWithAST(code, false, 2, false);
-      expect(result).toContain('CARD_PLAYED(cardId, targetSlot, ...extra)');
-    });
-
-    it('preserves React Hooks (useState, useRef, useEffect deps) while truncating component body', () => {
-      const reactCode = `
-  export const UserDashboard = ({ userId }) => {
-    const [user, setUser] = useState(null);
-    const countRef = useRef(0);
-    useEffect(() => {
-      fetchUserData(userId).then(res => setUser(res.data));
-      console.log('Heavy render logic');
-    }, [userId]);
-
-    const handleUpdate = () => {
-      console.log('Update button clicked');
-    };
-
-    return <div>{user ? user.name : 'Loading'}</div>;
-  };
-  `;
-      const result = skeletonizeWithAST(reactCode, false, 2, true);
-          expect(result).toContain('const [user, setUser] = useState(null);');
-          expect(result).toContain('const countRef = useRef(0);');
-          expect(result).toMatch(/useEffect\(\(\)\s*=>\s*\{[\s\S]*?\},\s*\[userId\]\);/);
-          expect(result).not.toContain('Heavy render logic');
-          expect(result).not.toContain('Update button clicked');
-    });
+}
+`;
+    const result = skeletonizeWithAST(code, false, 2, false);
+    expect(result).toContain('CARD_PLAYED(cardId, targetSlot, ...extra)');
   });
+
+  it('preserves React Hooks (useState, useRef, useEffect deps) while truncating component body', () => {
+    const reactCode = `
+export const UserDashboard = ({ userId }) => {
+  const [user, setUser] = useState(null);
+  const countRef = useRef(0);
+  useEffect(() => {
+    fetchUserData(userId).then(res => setUser(res.data));
+    console.log('Heavy render logic');
+  }, [userId]);
+
+  const handleUpdate = () => {
+    console.log('Update button clicked');
+  };
+
+  return <div>{user ? user.name : 'Loading'}</div>;
+};
+`;
+    const result = skeletonizeWithAST(reactCode, false, 2, true);
+    expect(result).toContain('const [user, setUser] = useState(null);');
+    expect(result).toContain('const countRef = useRef(0);');
+    expect(result).toMatch(/useEffect\(\(\)\s*=>\s*\{[\s\S]*?\},\s*\[userId\]\);/);
+    expect(result).not.toContain('Heavy render logic');
+    expect(result).not.toContain('Update button clicked');
+  });
+});
 
 describe('CSS Semantic Optimizer', () => {
   it('preserves :root variables and layout properties while omitting decorative styles', () => {
@@ -180,6 +146,29 @@ describe('CSS Semantic Optimizer', () => {
     expect(result).toContain('position: fixed');
     expect(result).not.toContain('box-shadow');
     expect(result).toContain('.btn-primary');
+  });
+
+  it('handles nested CSS with @media and CSS nesting without syntax errors', () => {
+    const nestedCSS = `
+:root { --main-bg: #000; }
+@media (max-width: 768px) {
+  .sidebar {
+    display: flex;
+    & > .nav-item {
+      position: absolute;
+    }
+  }
+}
+.card {
+  color: red;
+}
+`;
+    const result = summarizeCSS(nestedCSS);
+    expect(result).toContain('--main-bg: #000');
+    expect(result).toContain('@media (max-width: 768px)');
+    expect(result).toContain('display: flex');
+    expect(result).toContain('position: absolute');
+    expect(result).toContain('.card');
   });
 });
 
@@ -213,43 +202,62 @@ INSERT INTO users (id, email) VALUES (5, 'e@test.com');
     expect(result).not.toContain("INSERT INTO users (id, email) VALUES (5, 'e@test.com');");
     expect(result).toContain('/* ... 3 redundant INSERT statements omitted for users ... */');
   });
+
+  it('handles SQL queries with semicolons inside string literals without breaking statements', () => {
+    const sql = `
+CREATE TABLE logs (
+  id INT PRIMARY KEY,
+  message TEXT
+);
+
+INSERT INTO logs (id, message) VALUES (1, 'error; retry needed; code=500');
+INSERT INTO logs (id, message) VALUES (2, 'success; all good');
+INSERT INTO logs (id, message) VALUES (3, 'warning; check syntax');
+`;
+    const result = optimizeSQL(sql);
+    expect(result).toContain('CREATE TABLE logs');
+    expect(result).toContain("INSERT INTO logs (id, message) VALUES (1, 'error; retry needed; code=500');");
+    expect(result).toContain("INSERT INTO logs (id, message) VALUES (2, 'success; all good');");
+    expect(result).not.toContain("INSERT INTO logs (id, message) VALUES (3, 'warning; check syntax');");
+    expect(result).toContain('/* ... 1 redundant INSERT statements omitted for logs ... */');
+  });
 });
 
 describe('Fast-XML & JSON Extractor', () => {
   it('parses XML Repomix output with embedded HTML without corruption', () => {
-      const xml = '<repomix>\n  <file path="src/component.html">\n    <div class="card">Hello &amp; Welcome</div>\n  </file>\n  <file path="src/main.ts">\n    console.log("TS code");\n  </file>\n</repomix>';
-      const files = extractFiles(xml, 'repomix-output.xml');
-      expect(files).toHaveLength(2);
-      expect(files[0].path).toBe('src/component.html');
-      expect(files[0].content).toContain('<div class="card">Hello & Welcome</div>');
-      expect(files[1].path).toBe('src/main.ts');
-    });
+    const xml = '<repomix>\n  <file path="src/component.html">\n    <div class="card">Hello &amp; Welcome</div>\n  </file>\n  <file path="src/main.ts">\n    console.log("TS code");\n  </file>\n</repomix>';
+    const files = extractFiles(xml, 'repomix-output.xml');
+    expect(files).toHaveLength(2);
+    expect(files[0].path).toBe('src/component.html');
+    expect(files[0].content).toContain('<div class="card">Hello & Welcome</div>');
+    expect(files[1].path).toBe('src/main.ts');
+  });
+});
+
+describe('Token Counter & Cost Estimator', () => {
+  it('uses fast byte approximation by default and exact tokenization when specified', () => {
+    const text = 'Hello world, this is a test repository semantic compression.';
+    const approxCount = countTokens(text, false);
+    const exactCount = countTokens(text, true);
+
+    expect(approxCount).toBeGreaterThan(0);
+    expect(exactCount).toBeGreaterThan(0);
+    expect(typeof approxCount).toBe('number');
+    expect(typeof exactCount).toBe('number');
   });
 
-  describe('Token Counter & Cost Estimator', () => {
-    it('uses fast byte approximation by default and exact tokenization when specified', () => {
-      const text = 'Hello world, this is a test repository semantic compression.';
-      const approxCount = countTokens(text, false);
-      const exactCount = countTokens(text, true);
-
-      expect(approxCount).toBeGreaterThan(0);
-      expect(exactCount).toBeGreaterThan(0);
-      expect(typeof approxCount).toBe('number');
-      expect(typeof exactCount).toBe('number');
-    });
-
-    it('handles empty string and falsy inputs safely', () => {
-      expect(countTokens('')).toBe(0);
-      expect(countTokens(null)).toBe(0);
-      expect(countTokens(undefined)).toBe(0);
-    });
+  it('handles empty string and falsy inputs safely', () => {
+    expect(countTokens('')).toBe(0);
+    expect(countTokens(null)).toBe(0);
+    expect(countTokens(undefined)).toBe(0);
   });
+});
 
-  describe('Focus Mode (Targeted Context Slicing)', () => {
-    const sampleFiles = [
-      {
-        path: 'src/auth/service.ts',
-        content: `
+describe('Focus Mode (Targeted Context Slicing)', () => {
+  const sampleFiles = [
+    {
+      path: 'src/auth/service.ts',
+      content: `
 import { hashPassword } from '../utils/crypto';
 export function login(username, password) {
   const hash = hashPassword(password);
@@ -258,10 +266,10 @@ export function login(username, password) {
   return session;
 }
 `
-      },
-      {
-        path: 'src/utils/crypto.ts',
-        content: `
+    },
+    {
+      path: 'src/utils/crypto.ts',
+      content: `
 export function hashPassword(pw: string): string {
   const salt = 'xyz';
   const hashed = pw + salt;
@@ -269,10 +277,10 @@ export function hashPassword(pw: string): string {
   return hashed;
 }
 `
-      },
-      {
-        path: 'src/components/Button.tsx',
-        content: `
+    },
+    {
+      path: 'src/components/Button.tsx',
+      content: `
 export const Button = () => {
   return <button>Click me</button>;
 };
@@ -280,46 +288,59 @@ export const IconButton = () => {
   return <button>Icon</button>;
 };
 `
-      }
-    ];
+    }
+  ];
 
-    it('preserves full implementation for focused files, skeleton for 1-hop imports, and minimal summary for out-of-scope files', async () => {
-      const result = await compressRepository(sampleFiles, { focus: 'src/auth', maxPreserveLines: 2 });
+  it('preserves full implementation for focused files, skeleton for 1-hop imports, and minimal summary for out-of-scope files', async () => {
+    const result = await compressRepository(sampleFiles, { focus: 'src/auth', maxPreserveLines: 2 });
 
-      expect(result).toContain('### File: src/auth/service.ts [FOCUS - FULL IMPLEMENTATION]');
-      expect(result).toContain('const session = createSession(token);');
+    expect(result).toContain('### File: src/auth/service.ts [FOCUS - FULL IMPLEMENTATION]');
+    expect(result).toContain('const session = createSession(token);');
 
-      expect(result).toContain('### File: src/utils/crypto.ts [1-HOP DEPENDENCY - SKELETON]');
-      expect(result).toContain('return null as any;');
-      expect(result).not.toContain('heavy crypto logic');
+    expect(result).toContain('### File: src/utils/crypto.ts [1-HOP DEPENDENCY - SKELETON]');
+    expect(result).toContain('return null as any;');
+    expect(result).not.toContain('heavy crypto logic');
 
-      expect(result).toContain('### File: src/components/Button.tsx [OUT OF SCOPE - SUMMARY]');
-      expect(result).toContain('Button, IconButton');
-      expect(result).not.toContain('<button>Click me</button>');
-    });
+    expect(result).toContain('### File: src/components/Button.tsx [OUT OF SCOPE - SUMMARY]');
+    expect(result).toContain('Button, IconButton');
+    expect(result).not.toContain('<button>Click me</button>');
+  });
+});
+
+describe('Worker Threads Parallel Processing', () => {
+  it('processes larger batches via worker threads while preserving deterministic file ordering', async () => {
+    const manyFiles = Array.from({ length: 25 }, (_, i) => ({
+      path: `src/module_${String(i).padStart(2, '0')}.ts`,
+      content: `export function compute${i}() {\n  const x = ${i};\n  const y = ${i + 1};\n  const z = ${i + 2};\n  return x + y + z;\n}`
+    }));
+
+    const result = await compressRepository(manyFiles, { maxPreserveLines: 1 });
+    expect(result).toContain('### File: src/module_00.ts');
+    expect(result).toContain('### File: src/module_24.ts');
+
+    // Verify strict ordering
+    const pos0 = result.indexOf('### File: src/module_00.ts');
+    const pos24 = result.indexOf('### File: src/module_24.ts');
+    expect(pos0).toBeLessThan(pos24);
   });
 
-  describe('Worker Threads Parallel Processing', () => {
-    it('processes larger batches via worker threads while preserving deterministic file ordering', async () => {
-      const manyFiles = Array.from({ length: 25 }, (_, i) => ({
-        path: `src/module_${String(i).padStart(2, '0')}.ts`,
-        content: `export function compute${i}() {\n  const x = ${i};\n  const y = ${i + 1};\n  const z = ${i + 2};\n  return x + y + z;\n}`
-      }));
+  it('gracefully handles and falls back when worker encounters corrupted file without crashing batch', async () => {
+    // 25個以上のファイル群の中に意図的に壊れたコードを含むファイルを混入させ、Worker例外処理を通過させる
+    const filesWithCorruption = Array.from({ length: 25 }, (_, i) => ({
+      path: `src/mod_${i}.ts`,
+      content: i === 5 ? 'export const invalid = {{{ syntax error' : `export function ok${i}() { return ${i}; }`
+    }));
 
-      const result = await compressRepository(manyFiles, { maxPreserveLines: 1 });
-      expect(result).toContain('### File: src/module_00.ts');
-      expect(result).toContain('### File: src/module_24.ts');
-
-      // Verify strict ordering
-      const pos0 = result.indexOf('### File: src/module_00.ts');
-      const pos24 = result.indexOf('### File: src/module_24.ts');
-      expect(pos0).toBeLessThan(pos24);
-    });
+    const result = await compressRepository(filesWithCorruption, { maxPreserveLines: 1 });
+    expect(result).toContain('### File: src/mod_0.ts');
+    expect(result).toContain('### File: src/mod_5.ts');
+    expect(result).toContain('syntax error'); // クラッシュせず生コードのままフォールバックされていること
   });
+});
 
-  describe('P0 Bug Fixes & Regression Suite', () => {
-    it('does not inject return statement into class constructor and preserves super()', () => {
-      const classCode = `
+describe('P0 Bug Fixes & Regression Suite', () => {
+  it('does not inject return statement into class constructor and preserves super()', () => {
+    const classCode = `
 class AuthService extends BaseService {
   constructor(config, logger) {
     super(config);
@@ -329,14 +350,14 @@ class AuthService extends BaseService {
   }
 }
 `;
-      const result = skeletonizeWithAST(classCode, false, 2, false);
-      expect(result).toContain('super(config);');
-      expect(result).not.toContain('return null as any;');
-      expect(result).not.toContain('Heavy constructor logic');
-    });
+    const result = skeletonizeWithAST(classCode, false, 2, false);
+    expect(result).toContain('super(config);');
+    expect(result).not.toContain('return null as any;');
+    expect(result).not.toContain('Heavy constructor logic');
+  });
 
-    it('compresses useMemo and useCallback variable declarations while keeping dependency arrays', () => {
-      const hookCode = `
+  it('compresses useMemo and useCallback variable declarations while keeping dependency arrays', () => {
+    const hookCode = `
 export const DataViewer = ({ items, filter }) => {
   const filteredData = useMemo(() => {
     const intermediate = items.filter(i => i.active);
@@ -351,34 +372,49 @@ export const DataViewer = ({ items, filter }) => {
   return <div>{filteredData.length}</div>;
 };
 `;
-      const result = skeletonizeWithAST(hookCode, false, 2, true);
-      expect(result).toContain('const filteredData = useMemo(() => {}, [items, filter]);');
-      expect(result).toMatch(/const handleSelect = useCallback\((?:\(id\)|id) => \{\}, \[\]\);/);
-      expect(result).not.toContain('const intermediate = items.filter');
-      expect(result).not.toContain('Item selected:');
-    });
-
-    it('strictly resolves 1-hop imports avoiding prefix collisions and resolving index files', () => {
-      const allFiles = [
-        { path: 'src/auth/service.ts' },
-        { path: 'src/auth/service.test.ts' },
-        { path: 'src/auth_helper.ts' },
-        { path: 'src/utils/index.ts' },
-        { path: 'src/utils/crypto.ts' }
-      ];
-
-      const resolvedExact = resolveLocalImportPath('src/main.ts', './auth/service', allFiles);
-      expect(resolvedExact).toBe('src/auth/service.ts');
-
-      const resolvedIndex = resolveLocalImportPath('src/main.ts', './utils', allFiles);
-      expect(resolvedIndex).toBe('src/utils/index.ts');
-
-      const notFound = resolveLocalImportPath('src/main.ts', './non_existent', allFiles);
-      expect(notFound).toBeNull();
-    });
-
-    it('throws explicit error when repomix artifact is missing and autoPack is false', () => {
-      // 既存の repomix-output がカレントディレクトリに存在しても確実にテストできるように一時ディレクトリ名を指定
-      expect(() => findDefaultInputFile(false, 'non_existent_test_directory')).toThrow(/Repomix output file not found/);
-    });
+    const result = skeletonizeWithAST(hookCode, false, 2, true);
+    expect(result).toContain('const filteredData = useMemo(() => {}, [items, filter]);');
+    expect(result).toMatch(/const handleSelect = useCallback\((?:\(id\)|id) => \{\}, \[\]\);/);
+    expect(result).not.toContain('const intermediate = items.filter');
+    expect(result).not.toContain('Item selected:');
   });
+
+  it('strictly resolves 1-hop imports avoiding prefix collisions, resolving index files and path aliases (@/, ~/)', () => {
+    const allFiles = [
+      { path: 'src/auth/service.ts' },
+      { path: 'src/auth/service.test.ts' },
+      { path: 'src/auth_helper.ts' },
+      { path: 'src/utils/index.ts' },
+      { path: 'src/utils/crypto.ts' },
+      { path: 'components/Header.tsx' }
+    ];
+
+    const resolvedExact = resolveLocalImportPath('src/main.ts', './auth/service', allFiles);
+    expect(resolvedExact).toBe('src/auth/service.ts');
+
+    const resolvedIndex = resolveLocalImportPath('src/main.ts', './utils', allFiles);
+    expect(resolvedIndex).toBe('src/utils/index.ts');
+
+    // @/ および ~/ エイリアスの解決検証 (src/配下およびルート直下)
+    const resolvedAtAlias = resolveLocalImportPath('src/main.ts', '@/utils/crypto', allFiles);
+    expect(resolvedAtAlias).toBe('src/utils/crypto.ts');
+
+    const resolvedTildeAlias = resolveLocalImportPath('src/main.ts', '~/components/Header', allFiles);
+    expect(resolvedTildeAlias).toBe('components/Header.tsx');
+
+    const notFound = resolveLocalImportPath('src/main.ts', './non_existent', allFiles);
+    expect(notFound).toBeNull();
+  });
+
+  it('handles XML files with leading XML declarations without parser failure', () => {
+    const xmlWithProlog = '<?xml version="1.0" encoding="UTF-8"?>\n<repomix>\n  <file path="src/index.js">\n    console.log("hello");\n  </file>\n</repomix>';
+    const files = extractFiles(xmlWithProlog, 'repomix-output.xml');
+    expect(files).toHaveLength(1);
+    expect(files[0].path).toBe('src/index.js');
+    expect(files[0].content).toContain('console.log("hello");');
+  });
+
+  it('throws explicit error when repomix artifact is missing and autoPack is false', () => {
+    expect(() => findDefaultInputFile(false, 'non_existent_test_directory')).toThrow(/Repomix output file not found/);
+  });
+});

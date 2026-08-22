@@ -1,0 +1,8 @@
+@'
+node_modules/
+repomix-output.*
+repomix-optimized.md
+*.log
+.DS_Store
+dist/
+'@ | Out-File -FilePath .gitignore -Encoding utf8

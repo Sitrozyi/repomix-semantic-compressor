@@ -539,13 +539,18 @@ export function skeletonizeWithAST(code, isTypeScript, maxPreserveLines = 8, isJ
             innerComments: [{ type: 'CommentBlock', value: ` ...constructor impl (${totalLines} lines)... ` }]
           };
         } else {
+
+          const returnExpression = isTypeScript
+            ? {
+                type: 'TSAsExpression',
+                expression: { type: 'NullLiteral' },
+                typeAnnotation: { type: 'TSAnyKeyword' }
+              }
+            : { type: 'NullLiteral' };
+
           const dummyReturn = {
             type: 'ReturnStatement',
-            argument: {
-              type: 'TSAsExpression',
-              expression: { type: 'NullLiteral' },
-              typeAnnotation: { type: 'TSAnyKeyword' }
-            },
+            argument: returnExpression,
             leadingComments: [{ type: 'CommentBlock', value: commentText }]
           };
 
@@ -557,6 +562,7 @@ export function skeletonizeWithAST(code, isTypeScript, maxPreserveLines = 8, isJ
 
         if (astPath.isArrowFunctionExpression() && node.body.type !== 'BlockStatement') {
           node.body = replacementBody;
+          node.expression = false;
         } else if (node.body && node.body.type === 'BlockStatement') {
           node.body = replacementBody;
         }
@@ -945,7 +951,9 @@ export function extractFiles(rawContent, filePath) {
       trimValues: false
     });
 
-    const wrappedXml = `<root>${rawContent}</root>`;
+
+    const sanitizedXml = rawContent.replace(/<\?xml[\s\S]*?\?>/gi, '').trim();
+    const wrappedXml = `<root>${sanitizedXml}</root>`;
     const parsed = parser.parse(wrappedXml);
     const results = [];
 
@@ -1055,24 +1063,35 @@ const RESOLVABLE_EXTENSIONS = [
 ];
 
 /**
- * Resolves a relative import path to an exact matched repository file.
+ * Resolves relative (./, ../) and aliased (@/, ~/) import paths to an exact matched repository file.
  * @param {string} fromFilePath
  * @param {string} importPath
  * @param {{ path: string }[]} allFiles
  * @returns {string|null}
  */
 export function resolveLocalImportPath(fromFilePath, importPath, allFiles) {
-  if (!importPath.startsWith('.')) return null;
-
-  const currentDir = path.dirname(fromFilePath);
-  const normalizedBase = path.normalize(path.join(currentDir, importPath)).replace(/\\/g, '/');
-
   const fileMap = new Set(allFiles.map((f) => f.path));
+  const candidateBases = [];
 
-  for (const ext of RESOLVABLE_EXTENSIONS) {
-    const candidate = `${normalizedBase}${ext}`;
-    if (fileMap.has(candidate)) {
-      return candidate;
+  if (importPath.startsWith('.')) {
+    const currentDir = path.dirname(fromFilePath);
+    candidateBases.push(path.normalize(path.join(currentDir, importPath)).replace(/\\/g, '/'));
+  }
+
+  else if (importPath.startsWith('@/') || importPath.startsWith('~/')) {
+    const subPath = importPath.slice(2);
+    candidateBases.push(path.normalize(subPath).replace(/\\/g, '/'));
+    candidateBases.push(path.normalize(path.join('src', subPath)).replace(/\\/g, '/'));
+  } else {
+    return null;
+  }
+
+  for (const base of candidateBases) {
+    for (const ext of RESOLVABLE_EXTENSIONS) {
+      const candidate = `${base}${ext}`;
+      if (fileMap.has(candidate)) {
+        return candidate;
+      }
     }
   }
 
