@@ -31,27 +31,15 @@ npm install -D repomix-semantic-compressor
 ```
 
 ---
-
 ## Before & After
 
-```tsx
-// Before: Raw implementation (40+ lines)
-export const UserCard = ({ user }) => {
-  const [data, setData] = useState(null);
-  useEffect(() => {
-    fetchUser(user.id).then(setData);
-  }, [user.id]);
-  return <div className="card">...</div>;
-};
+<p align="center">
+  <img src="images/demo.gif" alt="Token Reduction Demo" width="100%">
+</p>
 
-// After: AST Skeletonized (~10 lines)
-export const UserCard = ({ user }) => {
-  const [data, setData] = useState(null);
-  useEffect(() => {}, [user.id]);
-  /* ...impl (30 lines)... */
-  return <div className="card">...</div>;
-};
-```
+- **TypeScript / Python**: Function bodies are stubbed (`return null as any;` / `...`), preserving interfaces and type signatures.
+- **Domain Logic**: Critical functions matching `is*`, `calc*`, `validate*`, `auth*` are preserved in full.
+- **CSS / SQL**: Retains `:root` tokens, layout properties, and DDL schemas while pruning bulk seed rows.
 
 - **TypeScript / Python**: Function bodies are stubbed (`return null as any;` / `...`), preserving interfaces and type signatures.
 - **Domain Logic**: Critical functions matching `is*`, `calc*`, `validate*`, `auth*` are preserved in full.
