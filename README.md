@@ -11,7 +11,14 @@ Reduces prompt tokens by **70%+** while preserving TypeScript types, React hooks
 ---
 
 ## ⚡ Quick Start
+## 📦 Installation
 
+```bash
+# Run directly without install (Recommended)
+npx repomix-semantic-compressor
+
+# Or add to your project
+npm install -D repomix-semantic-compressor
 ### 1. Run (Zero Install)
 Run in your repository root. It automatically runs Repomix if needed:
 ```bash
