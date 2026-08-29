@@ -35,11 +35,7 @@ npm install -D repomix-semantic-compressor
 
 <p align="center">
   <img src="aseets/repomix-compressor-demo.gif" alt="Token Reduction Demo" width="100%">
-</p>
-
-- **TypeScript / Python**: Function bodies are stubbed (`return null as any;` / `...`), preserving interfaces and type signatures.
-- **Domain Logic**: Critical functions matching `is*`, `calc*`, `validate*`, `auth*` are preserved in full.
-- **CSS / SQL**: Retains `:root` tokens, layout properties, and DDL schemas while pruning bulk seed rows.
+</p>
 
 - **TypeScript / Python**: Function bodies are stubbed (`return null as any;` / `...`), preserving interfaces and type signatures.
 - **Domain Logic**: Critical functions matching `is*`, `calc*`, `validate*`, `auth*` are preserved in full.
