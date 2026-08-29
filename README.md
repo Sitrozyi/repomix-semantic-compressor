@@ -1,66 +1,39 @@
 # repomix-semantic-compressor
 
-AST-powered semantic context compressor for [Repomix](https://repomix.com). Reduces prompt token volume by **70%+** while preserving TypeScript types, React hooks, state machine protocols, and database schemas.
+An AST-powered context compression tool that reduces Repomix prompt tokens by **70%+** while preserving critical context like TypeScript types, React hooks, and DB schemas.
 
----
+> **Note:** Repomix is a tool that packs your repository into a single file for AI prompts.
 
-## Quick Start
+## Features
+* **Smart Stubbing**: Prunes TS/Python function bodies while fully preserving type definitions and interfaces.
+* **Domain Logic Protection**: Keeps critical functions matching `is*`, `calc*`, `validate*`, `auth*` intact.
+* **Schema Extraction**: Retains CSS variables and SQL DDL schemas while stripping bulk seed rows.
 
-### 1. Run directly (No installation required)
+## Usage
 
-Run in your repository root. It automatically executes Repomix if needed:
+Run directly in your repository root. It automatically executes Repomix and generates `repomix-optimized.md`:
 
 ```bash
 npx repomix-semantic-compressor
 ```
 
-Output generated: `repomix-optimized.md` (ready to attach to Claude, ChatGPT, or Cursor).
+### Key Options
 
-### 2. Targeted Focus Mode
+| Option | Description |
+| :--- | :--- |
+| `--focus <path>` | Keep full implementation for target module while skeletonizing the rest |
+| `-o <file>` | Specify output file path |
+| `-i <file>` | Specify input file directly (`.xml` / `.json`) |
+| `--no-auto-pack` | Skip automatic Repomix execution |
 
-Keep full implementation for your target module and skeletonize the rest:
-
+**Example (Focus Mode):**
 ```bash
 npx repomix-semantic-compressor --focus src/auth -o auth-context.md
 ```
 
-### 3. Add to project (Optional)
+## MCP Integration
 
-```bash
-npm install -D repomix-semantic-compressor
-```
-
----
-## Before & After
-
-<p align="center">
-  <img src="aseets/repomix-compressor-demo.gif" alt="Token Reduction Demo" width="100%">
-</p>
-
-- **TypeScript / Python**: Function bodies are stubbed (`return null as any;` / `...`), preserving interfaces and type signatures.
-- **Domain Logic**: Critical functions matching `is*`, `calc*`, `validate*`, `auth*` are preserved in full.
-- **CSS / SQL**: Retains `:root` tokens, layout properties, and DDL schemas while pruning bulk seed rows.
-
----
-
-## CLI Reference
-
-```text
-npx repomix-semantic-compressor [options]
-
-  -f, --focus <pattern>            Target module path for 3-tier dependency slicing
-  -o, --output <path>              Output file path (default: repomix-optimized.md)
-  -i, --input <path>               Input Repomix file (auto-detects .xml/.json)
-  -m, --max-preserve-lines <num>   Threshold to preserve short functions (default: 8)
-  -e, --exact-tokens               Exact BPE cl100k_base token count (slower)
-      --no-auto-pack               Disable automatic repomix execution
-```
-
----
-
-## Model Context Protocol (MCP) Integration
-
-Add to your `claude_desktop_config.json` or Cursor/Windsurf MCP settings:
+Add to your configuration file for Claude Desktop, Cursor, or Windsurf:
 
 ```json
 {
@@ -73,8 +46,5 @@ Add to your `claude_desktop_config.json` or Cursor/Windsurf MCP settings:
 }
 ```
 
----
-
 ## License
-
-MIT License (c) 2026 Sitrozyi
+MIT (c) 2026 Sitrozyi
