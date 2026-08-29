@@ -1,6 +1,6 @@
 # repomix-semantic-compressor
 
-AST-powered semantic context compressor for [Repomix](https://repomix.com). Reduces prompt token volume by **60%–85%** while preserving TypeScript types, React hooks, state machine protocols, and database schemas.
+AST-powered semantic context compressor for [Repomix](https://repomix.com). Reduces prompt token volume by **70%+** while preserving TypeScript types, React hooks, state machine protocols, and database schemas.
 
 ---
 
