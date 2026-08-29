@@ -34,7 +34,7 @@ npm install -D repomix-semantic-compressor
 ## Before & After
 
 <p align="center">
-  <img src="images/demo.gif" alt="Token Reduction Demo" width="100%">
+  <img src="repomix-compressor-demo.gif" alt="Token Reduction Demo" width="100%">
 </p>
 
 - **TypeScript / Python**: Function bodies are stubbed (`return null as any;` / `...`), preserving interfaces and type signatures.
