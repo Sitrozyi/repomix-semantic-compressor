@@ -4,6 +4,8 @@ An AST-powered context compression tool that reduces Repomix prompt tokens by **
 
 > **Note:** Repomix is a tool that packs your repository into a single file for AI prompts.
 
+![Demo](./aseets/repomix-compressor-demo.gif)
+
 ## Features
 * **Smart Stubbing**: Prunes TS/Python function bodies while fully preserving type definitions and interfaces.
 * **Domain Logic Protection**: Keeps critical functions matching `is*`, `calc*`, `validate*`, `auth*` intact.
