@@ -1,58 +1,65 @@
 # repomix-semantic-compressor
 
-AST-powered semantic context compressor for [Repomix](https://repomix.com). 
-Reduces prompt tokens by **70%+** while preserving TypeScript types, React hooks, state protocols, and DB schemas.
-
-[![npm version](https://img.shields.io/npm/v/repomix-semantic-compressor.svg?style=flat-square)](https://www.npmjs.com/package/repomix-semantic-compressor)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](https://opensource.org/licenses/MIT)
-[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D18.3.0-43853d.svg?style=flat-square)](https://nodejs.org)
-[![MCP Ready](https://img.shields.io/badge/MCP-1.30%2B-8A2BE2.svg?style=flat-square)](https://modelcontextprotocol.io)
+AST-powered semantic context compressor for [Repomix](https://repomix.com). Reduces prompt token volume by **60%–85%** while preserving TypeScript types, React hooks, state machine protocols, and database schemas.
 
 ---
 
-## ⚡ Quick Start
-## 📦 Installation
+## Quick Start
 
-```bash
-# Run directly without install (Recommended)
-npx repomix-semantic-compressor
+### 1. Run directly (No installation required)
 
-# Or add to your project
-npm install -D repomix-semantic-compressor
-### 1. Run (Zero Install)
-Run in your repository root. It automatically runs Repomix if needed:
+Run in your repository root. It automatically executes Repomix if needed:
+
 ```bash
 npx repomix-semantic-compressor
 ```
-👉 Generates **`repomix-optimized.md`** (drop into Claude, ChatGPT, or Cursor).
+
+Output generated: `repomix-optimized.md` (ready to attach to Claude, ChatGPT, or Cursor).
 
 ### 2. Targeted Focus Mode
+
 Keep full implementation for your target module and skeletonize the rest:
+
 ```bash
 npx repomix-semantic-compressor --focus src/auth -o auth-context.md
 ```
 
+### 3. Add to project (Optional)
+
+```bash
+npm install -D repomix-semantic-compressor
+```
+
 ---
 
-## 💡 What It Does (Before vs After)
+## Before & After
 
 ```tsx
-// ❌ Before (Raw 40+ lines)                // ✅ After (AST Compressed ~10 lines)
-export const UserCard = ({ user }) => {     export const UserCard = ({ user }) => {
-  const [data, setData] = useState(null);     const [data, setData] = useState(null);
-  useEffect(() => {                           useEffect(() => {}, [user.id]);
-    fetchUser(user.id).then(setData);         /* ...impl (30 lines)... */
-  }, [user.id]);                              return <div className="card">...</div>;
-  return <div className="card">...</div>;   };
+// Before: Raw implementation (40+ lines)
+export const UserCard = ({ user }) => {
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    fetchUser(user.id).then(setData);
+  }, [user.id]);
+  return <div className="card">...</div>;
+};
+
+// After: AST Skeletonized (~10 lines)
+export const UserCard = ({ user }) => {
+  const [data, setData] = useState(null);
+  useEffect(() => {}, [user.id]);
+  /* ...impl (30 lines)... */
+  return <div className="card">...</div>;
 };
 ```
-- **TypeScript / Python**: Function bodies are stubbed (`return null as any;` / `...`), preserving all types and signatures.
-- **Business Logic**: Functions matching `is*`, `calc*`, `validate*`, `auth*` are **100% preserved**.
-- **CSS / SQL**: Retains design tokens (`:root`), layout rules, and DDL schemas while pruning bulk seed rows.
+
+- **TypeScript / Python**: Function bodies are stubbed (`return null as any;` / `...`), preserving interfaces and type signatures.
+- **Domain Logic**: Critical functions matching `is*`, `calc*`, `validate*`, `auth*` are preserved in full.
+- **CSS / SQL**: Retains `:root` tokens, layout properties, and DDL schemas while pruning bulk seed rows.
 
 ---
 
-## 🛠 CLI Options
+## CLI Reference
 
 ```text
 npx repomix-semantic-compressor [options]
@@ -67,8 +74,7 @@ npx repomix-semantic-compressor [options]
 
 ---
 
-<details>
-<summary><b>🤖 Model Context Protocol (MCP) Server Setup</b></summary>
+## Model Context Protocol (MCP) Integration
 
 Add to your `claude_desktop_config.json` or Cursor/Windsurf MCP settings:
 
@@ -82,12 +88,6 @@ Add to your `claude_desktop_config.json` or Cursor/Windsurf MCP settings:
   }
 }
 ```
-
-**Available Tools:**
-- `get_repo_skeleton(focus?, input?)`: Returns compressed semantic skeleton.
-- `get_file_implementation(path)`: Fetches full uncompressed source for a specific file.
-- `compress_repomix_file(input?, output?)`: Compresses artifact and writes to disk.
-</details>
 
 ---
 
