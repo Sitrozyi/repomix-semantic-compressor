@@ -16,6 +16,24 @@ function sanitizeInputPath(targetPath, baseDir = process.cwd()) {
   return resolvedTarget;
 }
 
+function errorResult(message) {
+  return {
+    content: [{ type: 'text', text: `Error: ${message}` }],
+    isError: true
+  };
+}
+
+function resolveInput(args = {}) {
+  const inputFile = args.input
+    ? sanitizeInputPath(args.input)
+    : findDefaultInputFile(false, '.', true);
+  if (!fs.existsSync(inputFile)) {
+    throw new Error(`Repomix file not found: ${inputFile}`);
+  }
+  const rawContent = fs.readFileSync(inputFile, 'utf-8');
+  return { inputFile, rawContent };
+}
+
 /**
  * Creates and configures the Repomix Compressor MCP Server instance.
  * @returns {Server}
@@ -109,22 +127,12 @@ export function createMCPServer() {
 
     try {
       if (name === 'get_repo_skeleton') {
-        let inputFile;
+        let inputFile, rawContent;
         try {
-          inputFile = args.input ? sanitizeInputPath(args.input) : findDefaultInputFile(false, '.', true);
+          ({ inputFile, rawContent } = resolveInput(args));
         } catch (err) {
-          return {
-            content: [{ type: 'text', text: `Error: ${err.message}` }],
-            isError: true
-          };
+          return errorResult(err.message);
         }
-        if (!fs.existsSync(inputFile)) {
-          return {
-            content: [{ type: 'text', text: `Error: Repomix file not found: ${inputFile}` }],
-            isError: true
-          };
-        }
-        const rawContent = fs.readFileSync(inputFile, 'utf-8');
         const files = extractFiles(rawContent, inputFile);
         const skeleton = await compressRepository(files, {
           focus: args.focus || null,
@@ -136,22 +144,12 @@ export function createMCPServer() {
       }
 
       if (name === 'get_file_implementation') {
-        let inputFile;
+        let inputFile, rawContent;
         try {
-          inputFile = args.input ? sanitizeInputPath(args.input) : findDefaultInputFile(false, '.', true);
+          ({ inputFile, rawContent } = resolveInput(args));
         } catch (err) {
-          return {
-            content: [{ type: 'text', text: `Error: ${err.message}` }],
-            isError: true
-          };
+          return errorResult(err.message);
         }
-        if (!fs.existsSync(inputFile)) {
-          return {
-            content: [{ type: 'text', text: `Error: Repomix file not found: ${inputFile}` }],
-            isError: true
-          };
-        }
-        const rawContent = fs.readFileSync(inputFile, 'utf-8');
         const files = extractFiles(rawContent, inputFile);
         const targetPath = args.path;
         const normTarget = path.normalize(targetPath).replace(/\\/g, '/').replace(/^\.\//, '');
@@ -180,24 +178,13 @@ export function createMCPServer() {
       }
 
       if (name === 'compress_repomix_file') {
-        let inputFile;
-        let outputFile;
+        let inputFile, outputFile, rawContent;
         try {
-          inputFile = args.input ? sanitizeInputPath(args.input) : findDefaultInputFile(false, '.', true);
+          ({ inputFile, rawContent } = resolveInput(args));
           outputFile = sanitizeInputPath(args.output || 'repomix-optimized.md');
         } catch (err) {
-          return {
-            content: [{ type: 'text', text: `Error: ${err.message}` }],
-            isError: true
-          };
+          return errorResult(err.message);
         }
-        if (!fs.existsSync(inputFile)) {
-          return {
-            content: [{ type: 'text', text: `Error: Repomix file not found: ${inputFile}` }],
-            isError: true
-          };
-        }
-        const rawContent = fs.readFileSync(inputFile, 'utf-8');
         const files = extractFiles(rawContent, inputFile);
         const result = await compressRepository(files, {
           focus: args.focus || null,

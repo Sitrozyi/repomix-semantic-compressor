@@ -7,7 +7,7 @@ An AST-powered context compression tool that reduces Repomix prompt tokens by **
 ![Demo](./assets/repomix-compressor-demo.gif)
 
 ## Features
-* **Smart Stubbing**: Prunes TS/Python function bodies while fully preserving type definitions and interfaces.
+* **Smart Stubbing: Prunes TS/JS function bodies while fully preserving type definitions and interfaces.
 * **Domain Logic Protection**: Keeps critical functions matching `is*`, `calc*`, `validate*`, `auth*` intact.
 * **Schema Extraction**: Retains CSS variables and SQL DDL schemas while stripping bulk seed rows.
 
