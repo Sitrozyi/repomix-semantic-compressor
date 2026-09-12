@@ -90,7 +90,7 @@ npm install
 npm run benchmark
 ```
 
-`npm run benchmark` runs the first three repositories by default. To include Go (`gin`) as in the table above, add it to `DEFAULT_REPOS` in `benchmarks/run.mjs`, or pass a URL directly:
+`npm run benchmark` runs all four repositories shown in the table above. You can also pass a custom repository URL directly:
 
 ```bash
 npm run benchmark -- https://github.com/gin-gonic/gin.git
