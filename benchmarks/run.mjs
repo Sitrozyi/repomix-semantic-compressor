@@ -12,7 +12,8 @@ const CACHE_DIR = path.join(__dirname, '.cache');
 const DEFAULT_REPOS = [
   { name: 'sindresorhus/ky', url: 'https://github.com/sindresorhus/ky.git' },
   { name: 'honojs/hono', url: 'https://github.com/honojs/hono.git' },
-  { name: 'tailwindlabs/tailwindcss', url: 'https://github.com/tailwindlabs/tailwindcss.git' }
+  { name: 'tailwindlabs/tailwindcss', url: 'https://github.com/tailwindlabs/tailwindcss.git' },
+  { name: 'gin-gonic/gin', url: 'https://github.com/gin-gonic/gin.git' }
 ];
 
 function run(cmd, cwd) {
