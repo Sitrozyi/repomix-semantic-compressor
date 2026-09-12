@@ -2,19 +2,16 @@
 
 [![test](https://github.com/Sitrozyi/repomix-semantic-compressor/actions/workflows/test.yml/badge.svg)](https://github.com/Sitrozyi/repomix-semantic-compressor/actions/workflows/test.yml)
 
-AST-guided context compressor for Repomix. Reduces prompt tokens by 45–80% by stripping function implementations while preserving type contracts, interfaces, docstrings, and database schemas. See [Benchmark](#benchmark).
-Compatible with **TypeScript / JavaScript, Go, and Python**.
+AST-based context compressor for Repomix. On tested repositories it reduces prompt tokens by 45–80% by replacing function bodies while preserving type contracts, interfaces, docstrings, and database schemas. Supports TypeScript / JavaScript, Go, and Python.
 
 ![Demo](./assets/repomix-compressor-demo.gif)
 
 ## How It Compresses
 
-Rather than naive text truncation, it preserves the exact architectural context that LLMs need:
-
-- **TypeScript / JavaScript**: Replaces function bodies with `throw new Error(...)` (`never` return type), satisfying strict type checkers without `any` escapes. Retains React hook dependency arrays (`useEffect`, `useMemo`).
-- **Go**: Replaces function and method bodies with `panic(...)`, preserving signatures and struct/interface contracts across arbitrary multiple return values.
-- **Python**: Retains function signatures and leading `"""docstrings"""`, stubbing implementations with `raise NotImplementedError`.
-- **Domain Logic Protection**: Automatically keeps implementations intact for utility/logic functions matching `is*`, `has*`, `can*`, `calc*`, `validate*`, `check*`, etc.
+- **TypeScript / JavaScript**: Replaces function bodies with `throw new Error(...)`. The inferred `never` return type satisfies strict type checkers without `any` escapes. React hook dependency arrays (`useEffect`, `useMemo`) are retained.
+- **Go**: Replaces function and method bodies with `panic(...)`, preserving signatures and struct/interface contracts.
+- **Python**: Retains function signatures and leading `"""docstrings"""`, and replaces bodies with `raise NotImplementedError`.
+- **Domain Logic Protection**: Keeps implementations intact for utility/logic functions matching `is*`, `has*`, `can*`, `calc*`, `validate*`, `check*`, etc.
 - **Schemas & Assets**: Retains SQL DDL (`CREATE TABLE`) while truncating bulk `INSERT` seeds. Keeps CSS `:root` tokens and layout properties while omitting decorative rules. Truncates long SVG paths and base64 strings.
 
 ## Usage
@@ -36,9 +33,9 @@ npx repomix-semantic-compressor
 | `-e, --exact-tokens` | Use exact BPE tokenizer instead of byte approximation |
 | `--no-auto-pack` | Disable automatic Repomix execution if artifact is missing |
 
-### Focus Mode (Targeted Slicing)
+### Focus Mode
 
-Keep full code for what you are actively editing, while reducing everything else to architectural context:
+Keep full code for the module you are editing and reduce everything else to skeletons or summaries:
 
 ```bash
 npx repomix-semantic-compressor --focus src/auth -o auth-context.md
@@ -46,9 +43,7 @@ npx repomix-semantic-compressor --focus src/auth -o auth-context.md
 
 ## MCP Server (Cursor / Claude Desktop / Windsurf)
 
-Exposes semantic skeleton extraction and on-demand file inspection as MCP tools.
-
-Add to your MCP configuration:
+Exposes semantic skeleton extraction and file inspection as MCP tools. Add to your MCP configuration:
 
 ```json
 {
@@ -62,13 +57,14 @@ Add to your MCP configuration:
 ```
 
 ### Exposed Tools
+
 - `get_repo_skeleton`: Returns the compressed semantic skeleton of the workspace.
-- `get_file_implementation`: Retrieves uncompressed full source code for a specific file on demand.
+- `get_file_implementation`: Retrieves uncompressed full source code for a specific file.
 - `compress_repomix_file`: Compresses a repomix artifact to a destination file.
 
 ## Benchmark
 
-Measured on real-world repositories (clean runs without artifact leakage). Token counts use byte-length approximation (`bytes / 3.8`); run with `--exact-tokens` for exact BPE counts.
+Measured on real-world repositories. Token counts use byte-length approximation (`bytes / 3.8`); run with `--exact-tokens` for exact BPE counts.
 
 | Repository | Language | Size (before) | Size (after) | Tokens (before) | Tokens (after) | Reduction |
 | :--- | :--- | ---: | ---: | ---: | ---: | ---: |
