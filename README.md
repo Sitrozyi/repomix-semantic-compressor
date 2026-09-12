@@ -2,7 +2,7 @@
 
 [![test](https://github.com/Sitrozyi/repomix-semantic-compressor/actions/workflows/test.yml/badge.svg)](https://github.com/Sitrozyi/repomix-semantic-compressor/actions/workflows/test.yml)
 
-An AST-powered context compression tool that reduces Repomix prompt tokens by 48-70% on third-party repositories while preserving critical context like TypeScript types, React hooks, and DB schemas.
+An AST-powered context compression tool that reduces Repomix prompt tokens by 48-70% on third-party repositories while preserving critical context like TypeScript types, React hooks, and DB schemas. See [Benchmark](#benchmark) for measured results.
 
 > **Note:** Repomix is a tool that packs your repository into a single file for AI prompts.
 
@@ -31,11 +31,13 @@ npx repomix-semantic-compressor
 | `-i <file>` | Specify input file directly (`.xml` / `.json`) |
 | `--no-auto-pack` | Skip automatic Repomix execution |
 
-Example (Focus Mode):
+### Example (Focus Mode)
 
 ```bash
 npx repomix-semantic-compressor --focus src/auth -o auth-context.md
 ```
+
+---
 
 ## MCP Integration
 
