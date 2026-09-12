@@ -1,6 +1,6 @@
 {
   "name": "repomix-semantic-compressor",
-  "version": "1.0.0",
+  "version": "0.1.1",
   "description": "AST-powered semantic compressor for Repomix. Drastically reduce LLM context token usage while preserving complete schema integrity and core logic.",
   "main": "src/core.mjs",
   "exports": {
