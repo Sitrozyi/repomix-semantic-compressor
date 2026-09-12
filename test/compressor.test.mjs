@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   skeletonizeWithAST,
+  skeletonizePython,
+  skeletonizeGo,
   summarizeCSS,
   optimizeHTML,
   optimizeSQL,
@@ -568,5 +570,84 @@ describe('Markdown Optimizer', () => {
     const result = optimizeMarkdown(md);
     expect(result).toContain('const a = 1;');
     expect(result).toContain('const b = 2;');
+  });
+});
+
+describe('Python Semantic Optimizer', () => {
+  it('preserves short functions (<= maxPreserveLines)', () => {
+    const py = 'def add(a: int, b: int) -> int:\n    return a + b\n';
+    const result = skeletonizePython(py, 8);
+    expect(result).toContain('return a + b');
+  });
+
+  it('preserves functions matching core logic whitelist (calc*, validate*, is*)', () => {
+    const py = `def calculate_discount(price: float, rate: float) -> float:
+    step1 = price * rate
+    step2 = step1 * 0.9
+    step3 = step2 * 0.8
+    step4 = step3 * 0.7
+    return step4
+`;
+    const result = skeletonizePython(py, 2);
+    expect(result).toContain('step1 = price * rate');
+    expect(result).toContain('return step4');
+  });
+
+  it('truncates long function bodies while preserving docstrings and signature', () => {
+    const py = `def process_user_records(users: list) -> dict:
+    """Processes user records and aggregates metadata.
+
+    Returns a summary mapping.
+    """
+    res = {}
+    for u in users:
+        print("heavy processing")
+        res[u.id] = u.name
+    return res
+`;
+    const result = skeletonizePython(py, 2);
+    expect(result).toContain('def process_user_records(users: list) -> dict:');
+    expect(result).toContain('"""Processes user records and aggregates metadata.');
+    expect(result).toContain('raise NotImplementedError');
+    expect(result).not.toContain('res[u.id] = u.name');
+  });
+});
+
+describe('Go Semantic Optimizer', () => {
+  it('preserves short functions (<= maxPreserveLines)', () => {
+    const go = 'func Add(a, b int) int {\n\treturn a + b\n}\n';
+    const result = skeletonizeGo(go, 8);
+    expect(result).toContain('return a + b');
+  });
+
+  it('preserves functions matching core logic whitelist (Validate*, Is*)', () => {
+    const go = `func (s *Service) ValidateUser(u *User) bool {
+\tline1 := true
+\tline2 := false
+\tline3 := true
+\tline4 := false
+\treturn line1 && line2 && line3 && line4
+}
+`;
+    const result = skeletonizeGo(go, 2);
+    expect(result).toContain('line1 := true');
+    expect(result).not.toContain('panic(');
+  });
+
+  it('truncates long functions and methods by injecting panic stub', () => {
+    const go = `func (s *Service) HandleTransaction(ctx context.Context, tx *Tx) error {
+\tlog.Println("Starting tx")
+\tstep1 := tx.Prepare()
+\tstep2 := tx.Commit(step1)
+\tif step2 != nil {
+\t\treturn step2
+\t}
+\treturn nil
+}
+`;
+    const result = skeletonizeGo(go, 2);
+    expect(result).toContain('func (s *Service) HandleTransaction(ctx context.Context, tx *Tx) error {');
+    expect(result).toContain('panic("Implementation omitted by repomix-semantic-compressor")');
+    expect(result).not.toContain('step1 := tx.Prepare()');
   });
 });

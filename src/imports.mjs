@@ -66,10 +66,10 @@ export function extractImports(code) {
 
     return Array.from(importedPaths);
   } catch {
-    const importRegex = /(?:import\s+(?:[^\n\r;]+?from\s+)?['"]([^'"]+)['"]|export\s+[^\n\r;]+?from\s+['"]([^'"]+)['"]|require\s*\(\s*['"]([^'"]+)['"]\s*\))/g;
+    const importRegex = /(?:import\s+(?:[^\n\r;]+?from\s+)?['"]([^'"]+)['"]|export\s+[^\n\r;]+?from\s+['"]([^'"]+)['"]|require\s*\(\s*['"]([^'"]+)['"]\s*\)|from\s+([.\w]+)\s+import|import\s+([.\w]+))/g;
     let match;
     while ((match = importRegex.exec(code)) !== null) {
-      const p = match[1] || match[2] || match[3];
+      const p = match[1] || match[2] || match[3] || match[4] || match[5];
       if (p) importedPaths.add(p);
     }
     return Array.from(importedPaths);
@@ -88,6 +88,9 @@ const RESOLVABLE_EXTENSIONS = [
   '.mts',
   '.cts',
   '.json',
+  '.py',
+  '/__init__.py',
+  '.go',
   '/index.ts',
   '/index.tsx',
   '/index.d.ts',

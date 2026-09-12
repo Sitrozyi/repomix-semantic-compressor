@@ -496,3 +496,375 @@ export function optimizeMarkdown(mdCode) {
 
   return out.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n';
 }
+
+const PY_CORE_LOGIC_REGEX = /^(_+)?(is|has|can|should|calc|calculate|validate|check|parse|format|sanitize)(_|[A-Z0-9])/i;
+
+/**
+ * Skeletonizes Python code: preserves functions <= maxPreserveLines or matching core logic whitelist,
+ * retains function docstrings, and replaces truncated function bodies with raise NotImplementedError.
+ */
+export function skeletonizePython(code, maxPreserveLines = 8) {
+  if (!code || !code.trim()) return code;
+
+  const lines = code.split('\n');
+  const resultLines = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Detect function definition: def func(...) or async def func(...)
+    const defMatch = line.match(/^([ \t]*)(?:async\s+)?def\s+([a-zA-Z0-9_]+)\s*\(/);
+    if (!defMatch) {
+      resultLines.push(line);
+      i++;
+      continue;
+    }
+
+    const indent = defMatch[1];
+    const funcName = defMatch[2];
+    const defStartLine = i;
+
+    // Collect full signature until line ending with ':' with balanced parentheses
+    const sigLines = [line];
+    let parenDepth = 0;
+    for (const char of line.slice(line.indexOf('('))) {
+      if (char === '(' || char === '[' || char === '{') parenDepth++;
+      else if (char === ')' || char === ']' || char === '}') parenDepth--;
+    }
+
+    let sigEndLine = i;
+    while (parenDepth > 0 && sigEndLine + 1 < lines.length) {
+      sigEndLine++;
+      const nextSigLine = lines[sigEndLine];
+      sigLines.push(nextSigLine);
+      for (const char of nextSigLine) {
+        if (char === '(' || char === '[' || char === '{') parenDepth++;
+        else if (char === ')' || char === ']' || char === '}') parenDepth--;
+      }
+    }
+
+    // Verify that signature ends with ':' (ignoring comments)
+    const lastSigLine = lines[sigEndLine];
+    const strippedLast = lastSigLine.replace(/#.*$/, '').trim();
+    if (!strippedLast.endsWith(':')) {
+      resultLines.push(line);
+      i++;
+      continue;
+    }
+
+    // Identify body lines (lines following signature with deeper indentation)
+    const bodyStart = sigEndLine + 1;
+    let bodyEnd = bodyStart - 1;
+
+    while (bodyEnd + 1 < lines.length) {
+      const nextLine = lines[bodyEnd + 1];
+      const nextTrimmed = nextLine.trim();
+
+      if (nextTrimmed === '') {
+        bodyEnd++;
+        continue;
+      }
+
+      const nextIndent = nextLine.match(/^[ \t]*/)[0];
+      if (nextIndent.length > indent.length && nextLine.startsWith(indent)) {
+        bodyEnd++;
+      } else {
+        break;
+      }
+    }
+
+    // Strip trailing empty lines from body
+    while (bodyEnd >= bodyStart && lines[bodyEnd].trim() === '') {
+      bodyEnd--;
+    }
+
+    const bodyLines = bodyEnd >= bodyStart ? lines.slice(bodyStart, bodyEnd + 1) : [];
+    const totalBodyLines = bodyLines.length;
+
+    // Preserve short or whitelisted functions
+    if (
+      totalBodyLines <= maxPreserveLines ||
+      (funcName && PY_CORE_LOGIC_REGEX.test(funcName))
+    ) {
+      for (let k = defStartLine; k <= bodyEnd; k++) {
+        resultLines.push(lines[k]);
+      }
+      i = bodyEnd + 1;
+      continue;
+    }
+
+    // Output signature
+    for (const sigLine of sigLines) {
+      resultLines.push(sigLine);
+    }
+
+    // Determine body indentation
+    let bodyIndent = indent + '    ';
+    if (bodyLines.length > 0) {
+      const firstNonEmpty = bodyLines.find((l) => l.trim() !== '');
+      if (firstNonEmpty) {
+        bodyIndent = firstNonEmpty.match(/^[ \t]*/)[0];
+      }
+    }
+
+    // Preserve docstring if present as first statement
+    const docstringLines = [];
+    if (bodyLines.length > 0) {
+      const firstLine = bodyLines[0].trim();
+      const docMatch = firstLine.match(/^(?:r|u|f)?("""|''')/i);
+      if (docMatch) {
+        const quote = docMatch[1];
+        if (firstLine.length > quote.length && firstLine.slice(quote.length).includes(quote)) {
+          docstringLines.push(bodyLines[0]);
+        } else {
+          docstringLines.push(bodyLines[0]);
+          for (let d = 1; d < bodyLines.length; d++) {
+            docstringLines.push(bodyLines[d]);
+            if (bodyLines[d].includes(quote)) {
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    for (const dLine of docstringLines) {
+      resultLines.push(dLine);
+    }
+
+    resultLines.push(
+      `${bodyIndent}raise NotImplementedError("Implementation omitted by repomix-semantic-compressor")`
+    );
+
+    i = bodyEnd + 1;
+  }
+
+  return resultLines.join('\n');
+}
+
+const GO_CORE_LOGIC_REGEX = /^(is|has|can|should|calc|calculate|validate|check|parse|format|sanitize)[A-Z0-9_]/i;
+
+/**
+ * Skeletonizes Go code: preserves functions <= maxPreserveLines or matching core logic whitelist,
+ * and replaces truncated function bodies with panic("Implementation omitted by repomix-semantic-compressor").
+ */
+export function skeletonizeGo(code, maxPreserveLines = 8) {
+  if (!code || !code.trim()) return code;
+
+  const replacements = [];
+  let inLineComment = false;
+  let inBlockComment = false;
+  let inString = false;
+  let inRawString = false;
+  let inRune = false;
+
+  for (let i = 0; i < code.length; i++) {
+    const char = code[i];
+    const nextChar = code[i + 1];
+
+    if (inLineComment) {
+      if (char === '\n') inLineComment = false;
+      continue;
+    }
+    if (inBlockComment) {
+      if (char === '*' && nextChar === '/') {
+        inBlockComment = false;
+        i++;
+      }
+      continue;
+    }
+    if (inString) {
+      if (char === '\\') {
+        i++;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (inRawString) {
+      if (char === '`') inRawString = false;
+      continue;
+    }
+    if (inRune) {
+      if (char === '\\') {
+        i++;
+      } else if (char === "'") {
+        inRune = false;
+      }
+      continue;
+    }
+
+    if (char === '/' && nextChar === '/') {
+      inLineComment = true;
+      i++;
+      continue;
+    }
+    if (char === '/' && nextChar === '*') {
+      inBlockComment = true;
+      i++;
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === '`') {
+      inRawString = true;
+      continue;
+    }
+    if (char === "'") {
+      inRune = true;
+      continue;
+    }
+
+    const isFuncStart =
+      (i === 0 || /[\s;}]/.test(code[i - 1])) &&
+      code.startsWith('func', i) &&
+      (code.length === i + 4 || /[\s(]/.test(code[i + 4]));
+
+    if (!isFuncStart) continue;
+
+    const funcStart = i;
+    let scanIdx = i + 4;
+    let parenDepth = 0;
+    let bodyOpenIdx = -1;
+
+    while (scanIdx < code.length) {
+      const c = code[scanIdx];
+      const nc = code[scanIdx + 1];
+
+      if (c === '/' && nc === '/') {
+        scanIdx += 2;
+        while (scanIdx < code.length && code[scanIdx] !== '\n') scanIdx++;
+        continue;
+      }
+      if (c === '/' && nc === '*') {
+        scanIdx += 2;
+        while (scanIdx < code.length && !(code[scanIdx] === '*' && code[scanIdx + 1] === '/')) scanIdx++;
+        scanIdx += 2;
+        continue;
+      }
+      if (c === '"') {
+        scanIdx++;
+        while (scanIdx < code.length && code[scanIdx] !== '"') {
+          if (code[scanIdx] === '\\') scanIdx++;
+          scanIdx++;
+        }
+        scanIdx++;
+        continue;
+      }
+      if (c === '`') {
+        scanIdx++;
+        while (scanIdx < code.length && code[scanIdx] !== '`') scanIdx++;
+        scanIdx++;
+        continue;
+      }
+
+      if (c === '(') parenDepth++;
+      else if (c === ')') parenDepth--;
+
+      if (parenDepth === 0 && (c === ';' || c === '\n')) {
+        break;
+      }
+
+      if (c === '{' && parenDepth === 0) {
+        bodyOpenIdx = scanIdx;
+        break;
+      }
+
+      scanIdx++;
+    }
+
+    if (bodyOpenIdx === -1) continue;
+
+    const sig = code.slice(funcStart, bodyOpenIdx);
+    const nameMatch = sig.match(/func\s*(?:\([^)]*\)\s*)?([a-zA-Z0-9_]+)/);
+    const funcName = nameMatch ? nameMatch[1] : '';
+
+    let braceDepth = 1;
+    let bodyCloseIdx = -1;
+    let j = bodyOpenIdx + 1;
+
+    while (j < code.length) {
+      const c = code[j];
+      const nc = code[j + 1];
+
+      if (c === '/' && nc === '/') {
+        j += 2;
+        while (j < code.length && code[j] !== '\n') j++;
+        continue;
+      }
+      if (c === '/' && nc === '*') {
+        j += 2;
+        while (j < code.length && !(code[j] === '*' && code[j + 1] === '/')) j++;
+        j += 2;
+        continue;
+      }
+      if (c === '"') {
+        j++;
+        while (j < code.length && code[j] !== '"') {
+          if (code[j] === '\\') j++;
+          j++;
+        }
+        j++;
+        continue;
+      }
+      if (c === '`') {
+        j++;
+        while (j < code.length && code[j] !== '`') j++;
+        j++;
+        continue;
+      }
+      if (c === "'") {
+        j++;
+        while (j < code.length && code[j] !== "'") {
+          if (code[j] === '\\') j++;
+          j++;
+        }
+        j++;
+        continue;
+      }
+
+      if (c === '{') braceDepth++;
+      else if (c === '}') {
+        braceDepth--;
+        if (braceDepth === 0) {
+          bodyCloseIdx = j;
+          break;
+        }
+      }
+      j++;
+    }
+
+    if (bodyCloseIdx === -1) continue;
+
+    const bodyContent = code.slice(bodyOpenIdx + 1, bodyCloseIdx);
+    const lineCount = bodyContent.split('\n').length;
+
+    if (
+      lineCount > maxPreserveLines &&
+      (!funcName || !GO_CORE_LOGIC_REGEX.test(funcName))
+    ) {
+      const lineStart = code.lastIndexOf('\n', funcStart);
+      const indent = code.slice(lineStart + 1, funcStart).match(/^[ \t]*/)[0];
+      const tabOrSpace = indent.includes('\t') || indent === '' ? '\t' : '  ';
+
+      replacements.push({
+        start: bodyOpenIdx,
+        end: bodyCloseIdx + 1,
+        text: `{\n${indent}${tabOrSpace}panic("Implementation omitted by repomix-semantic-compressor")\n${indent}}`
+      });
+
+      i = bodyCloseIdx;
+    }
+  }
+
+  replacements.sort((a, b) => b.start - a.start);
+  let optimized = code;
+  for (const r of replacements) {
+    optimized = optimized.slice(0, r.start) + r.text + optimized.slice(r.end);
+  }
+
+  return optimized;
+}

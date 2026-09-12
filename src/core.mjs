@@ -12,7 +12,9 @@ import {
   optimizeSQL,
   optimizeYAML,
   optimizeDockerfile,
-  optimizeMarkdown
+  optimizeMarkdown,
+  skeletonizePython,
+  skeletonizeGo
 } from './optimizers.mjs';
 import { skeletonizeWithAST } from './ast.mjs';
 import { extractFiles } from './extractor.mjs';
@@ -25,7 +27,9 @@ export {
   optimizeSQL,
   optimizeYAML,
   optimizeDockerfile,
-  optimizeMarkdown
+  optimizeMarkdown,
+  skeletonizePython,
+  skeletonizeGo
 } from './optimizers.mjs';
 export { skeletonizeWithAST, extractProtocolsFromAST } from './ast.mjs';
 export { extractFiles } from './extractor.mjs';
@@ -248,6 +252,10 @@ export function transformFileContent(filePath, originalCode, maxPreserveLines) {
     const isTS = ['.ts', '.mts', '.cts', '.tsx'].includes(ext);
     const isJSX = ['.jsx', '.tsx'].includes(ext);
     processedCode = skeletonizeWithAST(normalizedCode, isTS, maxPreserveLines, isJSX);
+  } else if (ext === '.py') {
+    processedCode = skeletonizePython(normalizedCode, maxPreserveLines);
+  } else if (ext === '.go') {
+    processedCode = skeletonizeGo(normalizedCode, maxPreserveLines);
   } else {
     processedCode = normalizedCode;
   }

@@ -34,6 +34,15 @@ function benchmarkRepo(repo) {
     console.log(`Using cached ${repo.name}`);
   }
 
+  const oldArtifacts = [
+    path.join(repoDir, 'repomix-output.xml'),
+    path.join(repoDir, 'repomix-output.json'),
+    path.join(repoDir, 'repomix-optimized.md')
+  ];
+  for (const f of oldArtifacts) {
+    if (fs.existsSync(f)) fs.unlinkSync(f);
+  }
+
   console.log(`Packing ${repo.name} with repomix...`);
   run('npx --yes repomix', repoDir);
 
