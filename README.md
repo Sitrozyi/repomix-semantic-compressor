@@ -1,5 +1,5 @@
 # repomix-semantic-compressor
-
+Early release. API may change in future versions.
 [![test](https://github.com/Sitrozyi/repomix-semantic-compressor/actions/workflows/test.yml/badge.svg)](https://github.com/Sitrozyi/repomix-semantic-compressor/actions/workflows/test.yml)
 
 Reduces Repomix prompt tokens by 48-70% (up to 80%+) while preserving TypeScript types, React hooks, and DB schemas. See [Benchmark](#benchmark).
