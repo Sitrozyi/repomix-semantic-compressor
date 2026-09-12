@@ -2,20 +2,21 @@
 
 [![test](https://github.com/Sitrozyi/repomix-semantic-compressor/actions/workflows/test.yml/badge.svg)](https://github.com/Sitrozyi/repomix-semantic-compressor/actions/workflows/test.yml)
 
-An AST-powered context compression tool that reduces Repomix prompt tokens by **70%+** while preserving critical context like TypeScript types, React hooks, and DB schemas.
+An AST-powered context compression tool that reduces Repomix prompt tokens by 48-70% on third-party repositories while preserving critical context like TypeScript types, React hooks, and DB schemas.
 
 > **Note:** Repomix is a tool that packs your repository into a single file for AI prompts.
 
 ![Demo](./assets/repomix-compressor-demo.gif)
 
 ## Features
-* **Smart Stubbing: Prunes TS/JS function bodies while fully preserving type definitions and interfaces.
-* **Domain Logic Protection**: Keeps critical functions matching `is*`, `calc*`, `validate*`, `auth*` intact.
-* **Schema Extraction**: Retains CSS variables and SQL DDL schemas while stripping bulk seed rows.
+
+- **Smart Stubbing**: Prunes TS/JS function bodies while preserving type definitions and interfaces.
+- **Domain Logic Protection**: Keeps critical functions matching `is*`, `calc*`, `validate*`, `auth*` intact.
+- **Schema Extraction**: Retains CSS variables and SQL DDL schemas while stripping bulk seed rows.
 
 ## Usage
 
-Run directly in your repository root. It automatically executes Repomix and generates `repomix-optimized.md`:
+Run in your repository root. It automatically executes Repomix and generates `repomix-optimized.md`:
 
 ```bash
 npx repomix-semantic-compressor
@@ -30,7 +31,8 @@ npx repomix-semantic-compressor
 | `-i <file>` | Specify input file directly (`.xml` / `.json`) |
 | `--no-auto-pack` | Skip automatic Repomix execution |
 
-**Example (Focus Mode):**
+Example (Focus Mode):
+
 ```bash
 npx repomix-semantic-compressor --focus src/auth -o auth-context.md
 ```
@@ -50,5 +52,25 @@ Add to your configuration file for Claude Desktop, Cursor, or Windsurf:
 }
 ```
 
+## Benchmark
+
+Measured on 2026-09-12. Token counts use the fast byte-length approximation (`bytes / 3.8`); add `--exact-tokens` for BPE counts.
+
+| Repository | Size (before) | Size (after) | Tokens (before) | Tokens (after) | Reduction |
+| :--- | ---: | ---: | ---: | ---: | ---: |
+| `sindresorhus/ky` | 737 kB | 382 kB | 198,637 | 102,929 | -48.2% |
+| `honojs/hono` | 2774 kB | 839 kB | 747,527 | 225,979 | -69.8% |
+| `tailwindlabs/tailwindcss` | 5138 kB | 2183 kB | 1,384,441 | 588,376 | -57.5% |
+
+To reproduce:
+
+```bash
+git clone https://github.com/Sitrozyi/repomix-semantic-compressor
+cd repomix-semantic-compressor
+npm install
+npm run benchmark
+```
+
 ## License
+
 MIT (c) 2026 Sitrozyi

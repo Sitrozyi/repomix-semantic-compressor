@@ -352,3 +352,147 @@ export function optimizeSQL(sqlCode) {
 
   return keptStatements.join('\n\n');
 }
+
+/**
+ * Strips full-line YAML comments and collapses blank runs.
+ * Lines inside block scalars (| or >) are preserved verbatim, including
+ * lines that begin with `#`, since they are string content rather than comments.
+ */
+export function optimizeYAML(yamlCode) {
+  if (!yamlCode || !yamlCode.trim()) return yamlCode;
+
+  const lines = yamlCode.split('\n');
+  const kept = [];
+  let blankRun = 0;
+  let blockScalarIndent = null;
+
+  for (const line of lines) {
+    const content = line.replace(/\s+$/, '');
+    const leading = line.length - line.trimStart().length;
+    const trimmed = line.trim();
+
+    if (blockScalarIndent !== null) {
+      if (trimmed === '' || leading > blockScalarIndent) {
+        kept.push(content);
+        continue;
+      }
+      blockScalarIndent = null;
+    }
+
+    if (/:\s*[|>][+-]?\s*$/.test(line)) {
+      blockScalarIndent = leading;
+      kept.push(content);
+      blankRun = 0;
+      continue;
+    }
+
+    if (trimmed.startsWith('#')) continue;
+
+    if (trimmed === '') {
+      blankRun++;
+      if (blankRun <= 1) kept.push('');
+      continue;
+    }
+
+    blankRun = 0;
+    kept.push(content);
+  }
+
+  return kept.join('\n').trim() + '\n';
+}
+
+/**
+ * Collapses multi-line RUN instructions in Dockerfiles while preserving
+ * stage structure (FROM/COPY/CMD/ENTRYPOINT) and all non-RUN directives.
+ */
+export function optimizeDockerfile(dockerCode) {
+  if (!dockerCode || !dockerCode.trim()) return dockerCode;
+
+  const lines = dockerCode.split('\n');
+  const out = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    if (trimmed === '' || trimmed.startsWith('#')) {
+      out.push(line.replace(/\s+$/, ''));
+      i++;
+      continue;
+    }
+
+    if (/^RUN\b/i.test(trimmed)) {
+      const start = i;
+      while (i < lines.length && /\\\s*$/.test(lines[i])) i++;
+      i++;
+      const total = i - start;
+
+      if (total <= 5) {
+        for (let j = start; j < i; j++) out.push(lines[j].replace(/\s+$/, ''));
+      } else {
+        out.push(lines[start].replace(/\s+$/, ''));
+        out.push(lines[start + 1].replace(/\s+$/, ''));
+        out.push(`# ...${total - 3} lines omitted from RUN...`);
+        out.push(lines[i - 1].replace(/\s+$/, ''));
+      }
+      continue;
+    }
+
+    out.push(line.replace(/\s+$/, ''));
+    i++;
+  }
+
+  return out.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n';
+}
+
+/**
+ * Truncates fenced code blocks longer than 32 lines in Markdown.
+ * Headings, prose, tables and short code examples are preserved verbatim.
+ */
+export function optimizeMarkdown(mdCode) {
+  if (!mdCode || !mdCode.trim()) return mdCode;
+
+  const lines = mdCode.split('\n');
+  const out = [];
+  let fenceChar = null;
+  let fenceLen = 0;
+  let codeBuffer = [];
+
+  const flush = (closed) => {
+    if (codeBuffer.length > 32) {
+      out.push(codeBuffer[0]);
+      out.push(`// ...${codeBuffer.length - (closed ? 2 : 1)} lines omitted...`);
+      if (closed) out.push(codeBuffer[codeBuffer.length - 1]);
+    } else {
+      out.push(...codeBuffer);
+    }
+    codeBuffer = [];
+  };
+
+  for (const line of lines) {
+    if (fenceChar === null) {
+      const open = line.match(/^\s{0,3}(`{3,}|~{3,})/);
+      if (open) {
+        fenceChar = open[1][0];
+        fenceLen = open[1].length;
+        codeBuffer.push(line.replace(/\s+$/, ''));
+      } else {
+        out.push(line.replace(/\s+$/, ''));
+      }
+      continue;
+    }
+
+    codeBuffer.push(line.replace(/\s+$/, ''));
+    const close = line.match(/^\s{0,3}([`~]{3,})\s*$/);
+    if (close && close[1][0] === fenceChar && close[1].length >= fenceLen) {
+      flush(true);
+      fenceChar = null;
+      fenceLen = 0;
+    }
+  }
+
+  if (fenceChar !== null) flush(false);
+
+  return out.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n';
+}

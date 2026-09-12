@@ -4,12 +4,16 @@ import {
   summarizeCSS,
   optimizeHTML,
   optimizeSQL,
+  optimizeYAML,
+  optimizeDockerfile,
+  optimizeMarkdown,
   extractFiles,
   countTokens,
   compressRepository,
   resolveLocalImportPath,
   findDefaultInputFile
 } from '../src/core.mjs';
+import { sanitizeInputPath } from '../src/mcp.mjs';
 
 describe('AST Skeletonizer', () => {
   it('preserves short utility & calculation functions (<= 8 lines)', () => {
@@ -81,18 +85,20 @@ export const ItemList = () => {
     expect(result).not.toContain('console.log("clicked");');
   });
 
-  it('injects valid return null in pure JS and avoids TypeScript TSAsExpression syntax error', () => {
+  it('injects a throw stub for truncated pure JavaScript functions without TS escapes', () => {
     const jsCode = 'function processData(items) {\n  const mapped = items.map(x => x * 2);\n  console.log(mapped);\n  return mapped;\n}';
     const result = skeletonizeWithAST(jsCode, false, 2, false);
-    expect(result).toContain('return null;');
-    expect(result).not.toContain('return null as any;');
+    expect(result).toContain('throw new Error');
+    expect(result).not.toContain('return null');
+    expect(result).not.toContain('as any');
   });
 
-  it('correctly parses generic arrow functions in pure TypeScript (.ts without JSX) and injects return null as any', () => {
+  it('correctly parses generic arrow functions in pure TypeScript (.ts without JSX) and injects a throw stub', () => {
     const tsCode = 'export const identity = <T>(val: T): T => {\n  const logged = val;\n  console.log(logged);\n  return logged;\n};';
     const result = skeletonizeWithAST(tsCode, true, 2, false);
     expect(result).toMatch(/export const identity = <T,?>\(val: T\): T =>/);
-    expect(result).toContain('return null as any;');
+    expect(result).toContain('throw new Error');
+    expect(result).not.toContain('as any');
   });
 
   it('extracts Action payloads from object destructuring', () => {
@@ -133,6 +139,21 @@ export const UserDashboard = ({ userId }) => {
     expect(result).toMatch(/useEffect\(\(\)\s*=>\s*\{[\s\S]*?\},\s*\[userId\]\);/);
     expect(result).not.toContain('Heavy render logic');
     expect(result).not.toContain('Update button clicked');
+  });
+
+  it('emits a throw stub for truncated TypeScript functions with declared return types, avoiding as-any escapes', () => {
+    const code = 'export async function fetchUser(id: string): Promise<User> {\n  const res = await fetch(`/api/${id}`);\n  const data = await res.json();\n  return data;\n}';
+    const result = skeletonizeWithAST(code, true, 2, false);
+    expect(result).toContain('throw new Error');
+    expect(result).not.toContain('as any');
+    expect(result).not.toContain('return null');
+  });
+
+  it('emits a throw stub for truncated JavaScript functions instead of a bare null return', () => {
+    const code = 'function heavyCompute(input) {\n  const a = input * 2;\n  const b = a + 1;\n  const c = Math.sqrt(b);\n  return c;\n}';
+    const result = skeletonizeWithAST(code, false, 2, false);
+    expect(result).toContain('throw new Error');
+    expect(result).not.toContain('return null');
   });
 });
 
@@ -298,7 +319,7 @@ export const IconButton = () => {
     expect(result).toContain('const session = createSession(token);');
 
     expect(result).toContain('### File: src/utils/crypto.ts [DEPENDENCY - SKELETON]');
-    expect(result).toContain('return null as any;');
+    expect(result).toContain('throw new Error');
     expect(result).not.toContain('heavy crypto logic');
 
     expect(result).toContain('### File: src/components/Button.tsx [OUT OF SCOPE - SUMMARY]');
@@ -464,5 +485,88 @@ $$ LANGUAGE plpgsql;
 
     const resolved = resolveLocalImportPath('src/main.ts', './auth/service', allFiles);
     expect(resolved).toBe('src\\auth\\Service.ts');
+  });
+});
+describe('MCP Path Sanitization', () => {
+  it('rejects path traversal attempts that escape the base directory', () => {
+    expect(() => sanitizeInputPath('../secret.txt', '/tmp/base')).toThrow(/Access denied/);
+    expect(() => sanitizeInputPath('../../etc/passwd', '/tmp/base')).toThrow(/Access denied/);
+    expect(() => sanitizeInputPath('sub/../../outside.txt', '/tmp/base')).toThrow(/Access denied/);
+    expect(() => sanitizeInputPath('/etc/passwd', '/tmp/base')).toThrow(/Access denied/);
+    expect(sanitizeInputPath('sub/inside.txt', '/tmp/base')).toMatch(/inside\.txt$/);
+  });
+});
+
+describe('YAML Optimizer', () => {
+  it('strips full-line comments and collapses blank runs while preserving block scalars', () => {
+    const yaml = `# Top level comment
+name: my-app
+version: 1.0.0
+
+# Another comment
+
+script: |
+  # This is content, not a comment
+  echo hello
+
+# trailing comment
+active: true
+`;
+    const result = optimizeYAML(yaml);
+    expect(result).not.toContain('# Top level comment');
+    expect(result).not.toContain('# Another comment');
+    expect(result).toContain('# This is content, not a comment');
+    expect(result).toContain('name: my-app');
+    expect(result).toContain('active: true');
+  });
+});
+
+describe('Dockerfile Optimizer', () => {
+  it('preserves stage structure and truncates long RUN instructions', () => {
+    const dockerfile = `FROM node:20 AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci && \\
+    npm run build && \\
+    npm prune --production && \\
+    rm -rf node_modules/.cache && \\
+    find . -name '*.map' -delete && \\
+    echo done
+
+FROM node:20-alpine
+COPY --from=builder /app/dist ./dist
+CMD ["node", "dist/index.js"]
+`;
+    const result = optimizeDockerfile(dockerfile);
+    expect(result).toContain('FROM node:20 AS builder');
+    expect(result).toContain('FROM node:20-alpine');
+    expect(result).toContain('lines omitted from RUN');
+    expect(result).toContain('CMD ["node", "dist/index.js"]');
+  });
+
+  it('keeps short RUN instructions untouched', () => {
+    const dockerfile = 'FROM alpine\nRUN apk add --no-cache curl\nCMD ["sh"]\n';
+    const result = optimizeDockerfile(dockerfile);
+    expect(result).toContain('RUN apk add --no-cache curl');
+  });
+});
+
+describe('Markdown Optimizer', () => {
+  it('truncates long fenced code blocks while preserving headings and prose', () => {
+    const longCode = Array.from({ length: 40 }, (_, i) => `const x${i} = ${i};`).join('\n');
+    const md = `# Title\n\nSome prose.\n\n\`\`\`js\n${longCode}\n\`\`\`\n\n## Section\n\nMore prose.\n`;
+    const result = optimizeMarkdown(md);
+    expect(result).toContain('# Title');
+    expect(result).toContain('Some prose.');
+    expect(result).toContain('## Section');
+    expect(result).toContain('lines omitted');
+    expect(result).not.toContain('const x39');
+  });
+
+  it('keeps short fenced code blocks intact', () => {
+    const md = '# Title\n\n```js\nconst a = 1;\nconst b = 2;\n```\n';
+    const result = optimizeMarkdown(md);
+    expect(result).toContain('const a = 1;');
+    expect(result).toContain('const b = 2;');
   });
 });

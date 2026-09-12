@@ -4,3 +4,4 @@ repomix-optimized.md
 *.log
 .DS_Store
 dist/
+benchmarks/.cache/

@@ -5,8 +5,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { extractFiles, compressRepository, findDefaultInputFile } from './core.mjs';
 
-// Prevent arbitrary file access outside the current working directory
-function sanitizeInputPath(targetPath, baseDir = process.cwd()) {
+export function sanitizeInputPath(targetPath, baseDir = process.cwd()) {
   const resolvedBase = path.resolve(baseDir);
   const resolvedTarget = path.resolve(baseDir, targetPath);
   const rel = path.relative(resolvedBase, resolvedTarget);
