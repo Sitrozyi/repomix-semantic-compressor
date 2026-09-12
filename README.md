@@ -2,7 +2,7 @@
 
 [![test](https://github.com/Sitrozyi/repomix-semantic-compressor/actions/workflows/test.yml/badge.svg)](https://github.com/Sitrozyi/repomix-semantic-compressor/actions/workflows/test.yml)
 
-AST-based context compressor for Repomix. On tested repositories it reduces prompt tokens by 45–80% by replacing function bodies while preserving type contracts, interfaces, docstrings, and database schemas. Supports TypeScript / JavaScript, Go, and Python. [Benchmark](#benchmark)
+AST-based context compressor for Repomix. On tested repositories it reduces prompt tokens by 45–80% by replacing function bodies while preserving type contracts, interfaces, docstrings, and database schemas ([Benchmark](#benchmark)). Supports TypeScript / JavaScript, Go, and Python.
 
 ![Demo](./assets/repomix-compressor-demo.gif)
 
