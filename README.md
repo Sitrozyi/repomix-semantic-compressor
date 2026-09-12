@@ -10,7 +10,7 @@ An AST-powered context compression tool that reduces Repomix prompt tokens by 48
 
 ## Features
 
-- **AST-based Stubbing**: Prunes TS/JS function bodies while preserving type definitions and interfaces.
+- **Function Stubbing**: Prunes TS/JS function bodies while preserving type definitions and interfaces.
 - **Domain Logic Protection**: Keeps critical functions matching `is*`, `calc*`, `validate*`, `auth*` intact.
 - **Schema Extraction**: Retains CSS variables and SQL DDL schemas while stripping bulk seed rows.
 
