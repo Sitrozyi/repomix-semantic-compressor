@@ -4,7 +4,7 @@
 
 Context compressor for Repomix. On tested repositories it reduces prompt tokens by 45–80% by replacing function bodies while preserving type contracts, interfaces, docstrings, and database schemas ([Benchmark](#benchmark)).
 
-- **TypeScript / JavaScript**: Full AST-based compression via Babel. Function bodies are replaced with `throw new Error(...)` (inferred `never` return type), so strict type checkers pass without `any` escapes. React hook dependency arrays (`useEffect`, `useMemo`) are retained.
+- **TypeScript / JavaScript**: Full AST-based compression via Babel. Function bodies are replaced with `throw new Error(...)` (inferred `never` return type), so strict type checkers pass without `any` escapes. React hook dependency arrays (`useEffect`, `useMemo`) are retained. Constructors and setters are the exception: constructors are emptied while preserving `super()` calls, and setters are emptied, since injecting `throw` there would break class initialization or violate the `set` contract.
 - **Python / Go**: Line-based function stubbing. Signatures and leading `"""docstrings"""` are preserved; Python bodies become `raise NotImplementedError`, Go bodies become `panic(...)`.
 - **Focus Mode** currently resolves imports and dependency graphs for TypeScript / JavaScript only. Python and Go files are compressed in full-repo mode but not dependency-traced.
 
@@ -15,6 +15,10 @@ Context compressor for Repomix. On tested repositories it reduces prompt tokens 
 - **Action/Event Protocol Extraction (TS/JS)**: For truncated reducers, emitters, and dispatchers, `switch (action.type)` cases, `emitter.emit('X')`, `dispatch({ type: 'X' })`, and `action.payload.foo` destructuring are summarized into a single `@payloads` line (e.g. `LOGIN_USER(userId, authToken)`), preserving the wire contract without the implementation.
 - **Domain Logic Protection**: Keeps implementations intact for utility/logic functions matching `is*`, `has*`, `can*`, `calc*`, `validate*`, `check*`, etc.
 - **Schemas & Assets**: Retains SQL DDL (`CREATE TABLE`) while truncating bulk `INSERT` seeds. Keeps CSS `:root` tokens and layout properties while omitting decorative rules. Truncates long SVG paths and base64 strings.
+- **JSON**: Minifies JSON artifacts by parsing and re-serializing them, stripping redundant whitespace and trailing commas. No structural transformation is applied.
+- **YAML**: Strips full-line comments and collapses blank runs, while leaving block scalars (`|`, `>`) verbatim since their content is string data, not comments.
+- **Dockerfile**: Collapses long multi-line `RUN` instructions while preserving stage structure (`FROM`, `COPY`, `CMD`, `ENTRYPOINT`) and all other directives.
+- **Markdown**: Truncates fenced code blocks longer than 32 lines. Headings, prose, tables, and short examples are preserved verbatim.
 
 ## Usage
 
@@ -99,4 +103,3 @@ npm run benchmark -- https://github.com/gin-gonic/gin.git
 ## License
 
 MIT (c) 2026 Sitrozyi
-  
