@@ -2,15 +2,16 @@
 
 [![test](https://github.com/Sitrozyi/repomix-semantic-compressor/actions/workflows/test.yml/badge.svg)](https://github.com/Sitrozyi/repomix-semantic-compressor/actions/workflows/test.yml)
 
-AST-based context compressor for Repomix. On tested repositories it reduces prompt tokens by 45–80% by replacing function bodies while preserving type contracts, interfaces, docstrings, and database schemas ([Benchmark](#benchmark)). Supports TypeScript / JavaScript, Go, and Python.
+Context compressor for Repomix. On tested repositories it reduces prompt tokens by 45–80% by replacing function bodies while preserving type contracts, interfaces, docstrings, and database schemas ([Benchmark](#benchmark)).
+
+- **TypeScript / JavaScript**: Full AST-based compression via Babel. Function bodies are replaced with `throw new Error(...)` (inferred `never` return type), so strict type checkers pass without `any` escapes. React hook dependency arrays (`useEffect`, `useMemo`) are retained.
+- **Python / Go**: Line-based function stubbing. Signatures and leading `"""docstrings"""` are preserved; Python bodies become `raise NotImplementedError`, Go bodies become `panic(...)`.
+- **Focus Mode** currently resolves imports and dependency graphs for TypeScript / JavaScript only. Python and Go files are compressed in full-repo mode but not dependency-traced.
 
 ![Demo](./assets/repomix-compressor-demo.gif)
 
 ## How It Compresses
 
-- **TypeScript / JavaScript**: Replaces function bodies with `throw new Error(...)`. The inferred `never` return type satisfies strict type checkers without `any` escapes. React hook dependency arrays (`useEffect`, `useMemo`) are retained.
-- **Go**: Replaces function and method bodies with `panic(...)`, preserving signatures and struct/interface contracts.
-- **Python**: Retains function signatures and leading `"""docstrings"""`, and replaces bodies with `raise NotImplementedError`.
 - **Domain Logic Protection**: Keeps implementations intact for utility/logic functions matching `is*`, `has*`, `can*`, `calc*`, `validate*`, `check*`, etc.
 - **Schemas & Assets**: Retains SQL DDL (`CREATE TABLE`) while truncating bulk `INSERT` seeds. Keeps CSS `:root` tokens and layout properties while omitting decorative rules. Truncates long SVG paths and base64 strings.
 
@@ -26,7 +27,7 @@ npx repomix-semantic-compressor
 
 | Option | Description |
 | :--- | :--- |
-| `-f, --focus <path>` | Retain full implementation for target path/module; skeletonize 1-hop imports; summarize the rest |
+| `-f, --focus <path>` | Retain full implementation for target path/module; skeletonize 1-hop imports; summarize the rest (TS/JS only) |
 | `-o, --output <file>` | Output file path (default: `repomix-optimized.md`) |
 | `-i, --input <file>` | Input artifact path (`.xml` or `.json`) |
 | `-m, --max-preserve-lines <n>` | Max body lines to keep without truncation (default: `8`) |
@@ -40,6 +41,8 @@ Keep full code for the module you are editing and reduce everything else to skel
 ```bash
 npx repomix-semantic-compressor --focus src/auth -o auth-context.md
 ```
+
+Dependency tracing (import resolution, 1-hop dependency skeletons) is currently implemented for TypeScript / JavaScript. For Python and Go, Focus Mode still emits full implementations for matched files, but non-focused files are not dependency-resolved.
 
 ## MCP Server (Cursor / Claude Desktop / Windsurf)
 
