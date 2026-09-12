@@ -12,12 +12,13 @@ Context compressor for Repomix. On tested repositories it reduces prompt tokens 
 
 ## How It Compresses
 
+- **Action/Event Protocol Extraction (TS/JS)**: For truncated reducers, emitters, and dispatchers, `switch (action.type)` cases, `emitter.emit('X')`, `dispatch({ type: 'X' })`, and `action.payload.foo` destructuring are summarized into a single `@payloads` line (e.g. `LOGIN_USER(userId, authToken)`), preserving the wire contract without the implementation.
 - **Domain Logic Protection**: Keeps implementations intact for utility/logic functions matching `is*`, `has*`, `can*`, `calc*`, `validate*`, `check*`, etc.
 - **Schemas & Assets**: Retains SQL DDL (`CREATE TABLE`) while truncating bulk `INSERT` seeds. Keeps CSS `:root` tokens and layout properties while omitting decorative rules. Truncates long SVG paths and base64 strings.
 
 ## Usage
 
-Run in your repository root. If `repomix-output.xml` does not exist, it runs `npx repomix` automatically:
+Run in your repository root. Auto-pack is enabled by default: if `repomix-output.xml` does not exist, it runs `npx repomix` automatically. Pass `--no-auto-pack` to disable this.
 
 ```bash
 npx repomix-semantic-compressor
@@ -30,8 +31,8 @@ npx repomix-semantic-compressor
 | `-f, --focus <path>` | Retain full implementation for target path/module; skeletonize 1-hop imports; summarize the rest (TS/JS only) |
 | `-o, --output <file>` | Output file path (default: `repomix-optimized.md`) |
 | `-i, --input <file>` | Input artifact path (`.xml` or `.json`) |
-| `-m, --max-preserve-lines <n>` | Max body lines to keep without truncation (default: `8`) |
-| `-e, --exact-tokens` | Use exact BPE tokenizer instead of byte approximation |
+| `-m, --max-preserve-lines <n>` | Max lines to keep without truncation (default: `8`). For TS/JS this counts the whole function including signature; for Python/Go it counts the body only. |
+| `-e, --exact-tokens` | Use the exact `cl100k_base` BPE tokenizer instead of byte approximation |
 | `--no-auto-pack` | Disable automatic Repomix execution if artifact is missing |
 
 ### Focus Mode
@@ -42,7 +43,7 @@ Keep full code for the module you are editing and reduce everything else to skel
 npx repomix-semantic-compressor --focus src/auth -o auth-context.md
 ```
 
-Dependency tracing (import resolution, 1-hop dependency skeletons) is currently implemented for TypeScript / JavaScript. For Python and Go, Focus Mode still emits full implementations for matched files, but non-focused files are not dependency-resolved.
+Dependency tracing (import resolution, 1-hop dependency skeletons) is currently implemented for TypeScript / JavaScript. Files matching type/contract paths (`types/`, `interfaces/`, `models/`, `schemas/`, `constants/`, `contracts/`, `entities/`, and `*.d.ts`) are transitively followed so that type information stays complete. For Python and Go, Focus Mode still emits full implementations for matched files, but non-focused files are not dependency-resolved.
 
 ## MCP Server (Cursor / Claude Desktop / Windsurf)
 
@@ -67,7 +68,7 @@ Exposes semantic skeleton extraction and file inspection as MCP tools. Add to yo
 
 ## Benchmark
 
-Measured on real-world repositories. Token counts use byte-length approximation (`bytes / 3.8`); run with `--exact-tokens` for exact BPE counts.
+Measured on 2026-09-12 on real-world repositories. Token counts use byte-length approximation (`bytes / 3.8`); run with `--exact-tokens` for exact `cl100k_base` BPE counts.
 
 | Repository | Language | Size (before) | Size (after) | Tokens (before) | Tokens (after) | Reduction |
 | :--- | :--- | ---: | ---: | ---: | ---: | ---: |
@@ -85,6 +86,17 @@ npm install
 npm run benchmark
 ```
 
+`npm run benchmark` runs the first three repositories by default. To include Go (`gin`) as in the table above, add it to `DEFAULT_REPOS` in `benchmarks/run.mjs`, or pass a URL directly:
+
+```bash
+npm run benchmark -- https://github.com/gin-gonic/gin.git
+```
+
+## Requirements
+
+- Node.js >= 18.3.0 (uses `node:worker_threads` and the global `performance` API).
+
 ## License
 
 MIT (c) 2026 Sitrozyi
+  
