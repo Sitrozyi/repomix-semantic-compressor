@@ -2,45 +2,54 @@
 
 [![test](https://github.com/Sitrozyi/repomix-semantic-compressor/actions/workflows/test.yml/badge.svg)](https://github.com/Sitrozyi/repomix-semantic-compressor/actions/workflows/test.yml)
 
-Reduces Repomix prompt tokens by 48-70% (up to 80%+) while preserving TypeScript types, React hooks, and DB schemas. See [Benchmark](#benchmark).
-> **Note:** Repomix is a tool that packs your repository into a single file for AI prompts.
+AST-guided context compressor for Repomix. Reduces prompt tokens by 45–70% by stripping function implementations while preserving type contracts, interfaces, docstrings, and database schemas.
+
+Compatible with **TypeScript / JavaScript, Go, and Python**.
 
 ![Demo](./assets/repomix-compressor-demo.gif)
 
-## Features
+## How It Compresses
 
-- **Function Stubbing**: Prunes TS/JS function bodies while preserving type definitions and interfaces.
-- **Domain Logic Protection**: Keeps critical functions matching `is*`, `calc*`, `validate*`, `auth*` intact.
-- **Schema Extraction**: Retains CSS variables and SQL DDL schemas while stripping bulk seed rows.
+Rather than naive text truncation, it preserves the exact architectural context that LLMs need:
+
+- **TypeScript / JavaScript**: Replaces function bodies with `throw new Error(...)` (`never` return type), satisfying strict type checkers without `any` escapes. Retains React hook dependency arrays (`useEffect`, `useMemo`).
+- **Go**: Replaces function and method bodies with `panic(...)`, preserving signatures and struct/interface contracts across arbitrary multiple return values.
+- **Python**: Retains function signatures and leading `"""docstrings"""`, stubbing implementations with `raise NotImplementedError`.
+- **Domain Logic Protection**: Automatically keeps implementations intact for utility/logic functions matching `is*`, `has*`, `can*`, `calc*`, `validate*`, `check*`, etc.
+- **Schemas & Assets**: Retains SQL DDL (`CREATE TABLE`) while truncating bulk `INSERT` seeds. Keeps CSS `:root` tokens and layout properties while omitting decorative rules. Truncates long SVG paths and base64 strings.
 
 ## Usage
 
-Run in your repository root. It automatically executes Repomix and generates `repomix-optimized.md`:
+Run in your repository root. If `repomix-output.xml` does not exist, it runs `npx repomix` automatically:
 
 ```bash
 npx repomix-semantic-compressor
 ```
 
-### Key Options
+### Options
 
 | Option | Description |
 | :--- | :--- |
-| `--focus <path>` | Keep full implementation for target module while skeletonizing the rest |
-| `-o <file>` | Specify output file path |
-| `-i <file>` | Specify input file directly (`.xml` / `.json`) |
-| `--no-auto-pack` | Skip automatic Repomix execution |
+| `-f, --focus <path>` | Retain full implementation for target path/module; skeletonize 1-hop imports; summarize the rest |
+| `-o, --output <file>` | Output file path (default: `repomix-optimized.md`) |
+| `-i, --input <file>` | Input artifact path (`.xml` or `.json`) |
+| `-m, --max-preserve-lines <n>` | Max body lines to keep without truncation (default: `8`) |
+| `-e, --exact-tokens` | Use exact BPE tokenizer instead of byte approximation |
+| `--no-auto-pack` | Disable automatic Repomix execution if artifact is missing |
 
-### Example (Focus Mode)
+### Focus Mode (Targeted Slicing)
+
+Keep full code for what you are actively editing, while reducing everything else to architectural context:
 
 ```bash
 npx repomix-semantic-compressor --focus src/auth -o auth-context.md
 ```
 
----
+## MCP Server (Cursor / Claude Desktop / Windsurf)
 
-## MCP Integration
+Exposes semantic skeleton extraction and on-demand file inspection as MCP tools.
 
-Add to your configuration file for Claude Desktop, Cursor, or Windsurf:
+Add to your MCP configuration:
 
 ```json
 {
@@ -53,15 +62,21 @@ Add to your configuration file for Claude Desktop, Cursor, or Windsurf:
 }
 ```
 
+### Exposed Tools
+- `get_repo_skeleton`: Returns the compressed semantic skeleton of the workspace.
+- `get_file_implementation`: Retrieves uncompressed full source code for a specific file on demand.
+- `compress_repomix_file`: Compresses a repomix artifact to a destination file.
+
 ## Benchmark
 
-Measured on 2026-09-12. Token counts use the fast byte-length approximation (`bytes / 3.8`); add `--exact-tokens` for BPE counts.
+Measured on real-world repositories (clean runs without artifact leakage). Token counts use byte-length approximation (`bytes / 3.8`); run with `--exact-tokens` for exact BPE counts.
 
-| Repository | Size (before) | Size (after) | Tokens (before) | Tokens (after) | Reduction |
-| :--- | ---: | ---: | ---: | ---: | ---: |
-| `sindresorhus/ky` | 737 kB | 382 kB | 198,637 | 102,929 | -48.2% |
-| `honojs/hono` | 2774 kB | 839 kB | 747,527 | 225,979 | -69.8% |
-| `tailwindlabs/tailwindcss` | 5138 kB | 2183 kB | 1,384,441 | 588,376 | -57.5% |
+| Repository | Language | Size (before) | Size (after) | Tokens (before) | Tokens (after) | Reduction |
+| :--- | :--- | ---: | ---: | ---: | ---: | ---: |
+| `sindresorhus/ky` | TypeScript | 737 kB | 382 kB | 198,637 | 102,929 | **-48.2%** |
+| `honojs/hono` | TypeScript | 2,774 kB | 839 kB | 747,527 | 225,979 | **-69.8%** |
+| `tailwindlabs/tailwindcss` | JS / CSS | 5,138 kB | 2,183 kB | 1,384,441 | 588,376 | **-57.5%** |
+| `gin-gonic/gin` | Go | 849 kB | 454 kB | 228,807 | 122,329 | **-46.5%** |
 
 To reproduce:
 
