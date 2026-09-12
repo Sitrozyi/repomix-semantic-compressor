@@ -2,7 +2,7 @@
 
 [![test](https://github.com/Sitrozyi/repomix-semantic-compressor/actions/workflows/test.yml/badge.svg)](https://github.com/Sitrozyi/repomix-semantic-compressor/actions/workflows/test.yml)
 
-An AST-powered context compression tool that reduces Repomix prompt tokens by 48-70% on the third-party repositories benchmarked below, with some projects reaching 80%+. It preserves critical context like TypeScript types, React hooks, and DB schemas. See [Benchmark](#benchmark) for measured results.
+Reduces Repomix prompt tokens by 48-70% (up to 80%+) while preserving TypeScript types, React hooks, and DB schemas. See Benchmark.
 
 > **Note:** Repomix is a tool that packs your repository into a single file for AI prompts.
 
