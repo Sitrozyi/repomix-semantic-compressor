@@ -76,7 +76,6 @@ Measured on real-world repositories (clean runs without artifact leakage). Token
 | `sindresorhus/ky` | TypeScript | 737 kB | 382 kB | 198,637 | 102,929 | **-48.2%** |
 | `honojs/hono` | TypeScript | 2,774 kB | 839 kB | 747,527 | 225,979 | **-69.8%** |
 | `tailwindlabs/tailwindcss` | JS / CSS | 5,138 kB | 2,183 kB | 1,384,441 | 588,376 | **-57.5%** |
-| `gin-gonic/gin` | Go | 849 kB | 454 kB | 228,807 | 122,329 | **-46.5%** |
 
 To reproduce:
 
