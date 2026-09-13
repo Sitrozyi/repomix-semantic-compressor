@@ -2,7 +2,7 @@
 
 [![test](https://github.com/Sitrozyi/repomix-semantic-compressor/actions/workflows/test.yml/badge.svg)](https://github.com/Sitrozyi/repomix-semantic-compressor/actions/workflows/test.yml)
 
-Context compressor for Repomix. On tested repositories it reduces prompt tokens by 45–80% by replacing function bodies while preserving type contracts, interfaces, docstrings, and database schemas ([Benchmark](#benchmark)).
+Context compressor for Repomix. Reduces prompt tokens by 45–70% typically (up to 80%+) by stubbing function bodies while preserving type contracts, interfaces, docstrings, and database schemas ([Benchmark](https://github.com/Sitrozyi/repomix-semantic-compressor#benchmark)).  
 
 - **TypeScript / JavaScript**: Full AST-based compression via Babel. Function bodies are replaced with `throw new Error(...)` (inferred `never` return type), so strict type checkers pass without `any` escapes. React hook dependency arrays (`useEffect`, `useMemo`) are retained. Constructors and setters are the exception: constructors are emptied while preserving `super()` calls, and setters are emptied, since injecting `throw` there would break class initialization or violate the `set` contract.
 - **Python / Go**: Line-based function stubbing. Signatures and leading `"""docstrings"""` are preserved; Python bodies become `raise NotImplementedError`, Go bodies become `panic(...)`.
@@ -25,7 +25,7 @@ Context compressor for Repomix. On tested repositories it reduces prompt tokens 
 Run in your repository root. Auto-pack is enabled by default: if `repomix-output.xml` does not exist, it runs `npx repomix` automatically. Pass `--no-auto-pack` to disable this.
 
 ```bash
-npx repomix-semantic-compressor
+npx @sitrozyi/repomix-semantic-compressor
 ```
 
 ### Options
@@ -39,12 +39,14 @@ npx repomix-semantic-compressor
 | `-e, --exact-tokens` | Use the exact `cl100k_base` BPE tokenizer instead of byte approximation |
 | `--no-auto-pack` | Disable automatic Repomix execution if artifact is missing |
 
+#### 2. Focus Mode（フォーカスモード）
+```markdown
 ### Focus Mode
 
 Keep full code for the module you are editing and reduce everything else to skeletons or summaries:
 
 ```bash
-npx repomix-semantic-compressor --focus src/auth -o auth-context.md
+npx @sitrozyi/repomix-semantic-compressor --focus src/auth -o auth-context.md
 ```
 
 Dependency tracing (import resolution, 1-hop dependency skeletons) is currently implemented for TypeScript / JavaScript. Files matching type/contract paths (`types/`, `interfaces/`, `models/`, `schemas/`, `constants/`, `contracts/`, `entities/`, and `*.d.ts`) are transitively followed so that type information stays complete. For Python and Go, Focus Mode still emits full implementations for matched files, but non-focused files are not dependency-resolved.
@@ -58,7 +60,7 @@ Exposes semantic skeleton extraction and file inspection as MCP tools. Add to yo
   "mcpServers": {
     "repomix-semantic-compressor": {
       "command": "npx",
-      "args": ["-y", "repomix-semantic-compressor", "--mcp"]
+      "args": ["-y", "@sitrozyi/repomix-semantic-compressor", "--mcp"]
     }
   }
 }

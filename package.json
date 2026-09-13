@@ -1,6 +1,6 @@
 {
-  "name": "repomix-semantic-compressor",
-  "version": "0.1.1",
+  "name": "@sitrozyi/repomix-semantic-compressor",
+  "version": "0.1.3",
   "description": "AST-powered semantic compressor for Repomix. Drastically reduce LLM context token usage while preserving complete schema integrity and core logic.",
   "main": "src/core.mjs",
   "exports": {
@@ -8,11 +8,11 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "repomix-semantic-compressor": "./bin/cli.mjs",
-    "repomix-compress": "./bin/cli.mjs",
-    "rsc": "./bin/cli.mjs",
-    "repomix-compress-mcp": "./bin/mcp-server.mjs"
-  },
+      "repomix-semantic-compressor": "bin/cli.mjs",
+      "repomix-compress": "bin/cli.mjs",
+      "rsc": "bin/cli.mjs",
+      "repomix-compress-mcp": "bin/mcp-server.mjs"
+    },
   "type": "module",
   "keywords": [
     "repomix",
