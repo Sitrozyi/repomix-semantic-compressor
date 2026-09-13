@@ -8,8 +8,7 @@ Context compressor for Repomix. Reduces prompt tokens by 45–70% typically (up 
 - **Python / Go**: Line-based function stubbing. Signatures and leading `"""docstrings"""` are preserved; Python bodies become `raise NotImplementedError`, Go bodies become `panic(...)`.
 - **Focus Mode** currently resolves imports and dependency graphs for TypeScript / JavaScript only. Python and Go files are compressed in full-repo mode but not dependency-traced.
 
-![Demo](./assets/repomix-compressor-demo.gif)
-
+![Demo](https://raw.githubusercontent.com/Sitrozyi/repomix-semantic-compressor/main/assets/repomix-compressor-demo.gif)
 ## How It Compresses
 
 - **Action/Event Protocol Extraction (TS/JS)**: For truncated reducers, emitters, and dispatchers, `switch (action.type)` cases, `emitter.emit('X')`, `dispatch({ type: 'X' })`, and `action.payload.foo` destructuring are summarized into a single `@payloads` line (e.g. `LOGIN_USER(userId, authToken)`), preserving the wire contract without the implementation.
@@ -20,12 +19,16 @@ Context compressor for Repomix. Reduces prompt tokens by 45–70% typically (up 
 - **Dockerfile**: Collapses long multi-line `RUN` instructions while preserving stage structure (`FROM`, `COPY`, `CMD`, `ENTRYPOINT`) and all other directives.
 - **Markdown**: Truncates fenced code blocks longer than 32 lines. Headings, prose, tables, and short examples are preserved verbatim.
 
+```markdown
 ## Usage
 
 Run in your repository root. Auto-pack is enabled by default: if `repomix-output.xml` does not exist, it runs `npx repomix` automatically. Pass `--no-auto-pack` to disable this.
 
 ```bash
 npx @sitrozyi/repomix-semantic-compressor
+
+npm install -g @sitrozyi/repomix-semantic-compressor
+rsc
 ```
 
 ### Options
@@ -37,10 +40,13 @@ npx @sitrozyi/repomix-semantic-compressor
 | `-i, --input <file>` | Input artifact path (`.xml` or `.json`) |
 | `-m, --max-preserve-lines <n>` | Max lines to keep without truncation (default: `8`). For TS/JS this counts the whole function including signature; for Python/Go it counts the body only. |
 | `-e, --exact-tokens` | Use the exact `cl100k_base` BPE tokenizer instead of byte approximation |
+---
+
+### 置換コード（置換後）
+
+```markdown
 | `--no-auto-pack` | Disable automatic Repomix execution if artifact is missing |
 
-#### 2. Focus Mode（フォーカスモード）
-```markdown
 ### Focus Mode
 
 Keep full code for the module you are editing and reduce everything else to skeletons or summaries:
