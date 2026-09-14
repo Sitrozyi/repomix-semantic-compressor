@@ -110,7 +110,7 @@ npm run benchmark -- https://github.com/gin-gonic/gin.git
 
 ## Acknowledgements
 
-This project is built to complement [Repomix](https://github.com/yamadashy/repomix), the powerful codebase packing tool created by [Kazuki Yamada (@yamadashy)](https://github.com/yamadashy). Special thanks for building such an indispensable tool for the AI developer ecosystem.
+This project is built to complement [Repomix](https://github.com/yamadashy/repomix). Huge thanks to [Kazuki Yamada (@yamadashy)](https://github.com/yamadashy) for creating such an awesome tool!
 
 ## License
 
