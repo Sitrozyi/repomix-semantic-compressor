@@ -15,6 +15,12 @@ function decodeXMLEntities(str) {
     .replace(/&amp;/g, '&');
 }
 
+/**
+ * Extracts individual file paths and contents from Repomix XML or JSON artifacts.
+ * @param {string} rawContent
+ * @param {string} filePath
+ * @returns {{ path: string, content: string }[]}
+ */
 export function extractFiles(rawContent, filePath) {
   if (filePath.endsWith('.json') || rawContent.trim().startsWith('{')) {
     try {

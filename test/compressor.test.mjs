@@ -348,7 +348,7 @@ describe('Worker Threads Parallel Processing', () => {
   });
 
   it('gracefully handles and falls back when worker encounters corrupted file without crashing batch', async () => {
-    // 25個以上のファイル群の中に意図的に壊れたコードを含むファイルを混入させ、Worker例外処理を通過させる
+    // Inject corrupted syntax in a batch of 25+ files to test graceful worker thread fallback
     const filesWithCorruption = Array.from({ length: 25 }, (_, i) => ({
       path: `src/mod_${i}.ts`,
       content: i === 5 ? 'export const invalid = {{{ syntax error' : `export function ok${i}() { return ${i}; }`
@@ -357,7 +357,7 @@ describe('Worker Threads Parallel Processing', () => {
     const result = await compressRepository(filesWithCorruption, { maxPreserveLines: 1 });
     expect(result).toContain('### File: src/mod_0.ts');
     expect(result).toContain('### File: src/mod_5.ts');
-    expect(result).toContain('syntax error'); // クラッシュせず生コードのままフォールバックされていること
+    expect(result).toContain('syntax error'); // Fallback to raw code without crashing the batch
   });
 });
 
@@ -418,7 +418,7 @@ export const DataViewer = ({ items, filter }) => {
     const resolvedIndex = resolveLocalImportPath('src/main.ts', './utils', allFiles);
     expect(resolvedIndex).toBe('src/utils/index.ts');
 
-    // @/ および ~/ エイリアスの解決検証 (src/配下およびルート直下)
+    // Verify @/ and ~/ alias resolution (both under src/ and project root)
     const resolvedAtAlias = resolveLocalImportPath('src/main.ts', '@/utils/crypto', allFiles);
     expect(resolvedAtAlias).toBe('src/utils/crypto.ts');
 

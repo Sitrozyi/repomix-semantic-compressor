@@ -103,7 +103,7 @@ export function countTokens(text, exact = false) {
 }
 /**
  * Resolves CLI arguments and determines input/output paths safely.
- * @returns {{ inputFile: string, outputFile: string, maxPreserveLines: number }}
+ * @returns {{ inputFile: string, outputFile: string, maxPreserveLines: number, focus: string|null, exactTokens: boolean, autoPack: boolean }}
  */
 export function resolveConfig() {
   let parsed;
@@ -172,6 +172,7 @@ ${bold}Examples:${reset}
  * Finds default repomix output file or automatically runs repomix by default.
  * @param {boolean} [autoPack=true]
  * @param {string} [baseDir='.']
+ * @param {boolean} [silent=false]
  * @returns {string} Path to input file
  */
 export function findDefaultInputFile(autoPack = true, baseDir = '.', silent = false) {
@@ -225,6 +226,13 @@ export function writeToStream(stream, chunk) {
   return Promise.resolve();
 }
 
+/**
+ * Transforms individual file content based on file extension and semantics.
+ * @param {string} filePath
+ * @param {string} originalCode
+ * @param {number} maxPreserveLines
+ * @returns {{ ext: string, code: string }}
+ */
 export function transformFileContent(filePath, originalCode, maxPreserveLines) {
   const ext = path.extname(filePath).toLowerCase();
   const baseName = path.basename(filePath).toLowerCase();

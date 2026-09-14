@@ -251,6 +251,16 @@ function getFunctionName(astPath) {
   return null;
 }
 
+/**
+ * Skeletonizes JavaScript/TypeScript code using Babel AST traversal.
+ * Truncates function bodies with `throw new Error(...)` to infer `never` return types
+ * while preserving React hook dependency arrays, type contracts, and JSDoc comments.
+ * @param {string} code
+ * @param {boolean} isTypeScript
+ * @param {number} [maxPreserveLines=8]
+ * @param {boolean} [isJSX=true]
+ * @returns {string}
+ */
 export function skeletonizeWithAST(code, isTypeScript, maxPreserveLines = 8, isJSX = true) {
   try {
     const ast = parse(code, {
