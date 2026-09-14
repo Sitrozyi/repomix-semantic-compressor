@@ -2,7 +2,7 @@
 
 [![test](https://github.com/Sitrozyi/repomix-semantic-compressor/actions/workflows/test.yml/badge.svg)](https://github.com/Sitrozyi/repomix-semantic-compressor/actions/workflows/test.yml)
 
-Context compressor for Repomix. Reduces prompt tokens by 45–70% typically (up to 80%+) by stubbing function bodies while preserving type contracts, interfaces, docstrings, and database schemas ([Benchmark](https://github.com/Sitrozyi/repomix-semantic-compressor#benchmark)).  
+An unofficial semantic post-processor for [Repomix](https://repomix.com). Reduces prompt tokens by 45–70% typically (up to 80%+) by stubbing function bodies while preserving type contracts, interfaces, docstrings, and database schemas ([Benchmark](https://github.com/Sitrozyi/repomix-semantic-compressor#benchmark)).  
 
 - **TypeScript / JavaScript**: Full AST-based compression via Babel. Function bodies are replaced with `throw new Error(...)` (inferred `never` return type), so strict type checkers pass without `any` escapes. React hook dependency arrays (`useEffect`, `useMemo`) are retained. Constructors and setters are the exception: constructors are emptied while preserving `super()` calls, and setters are emptied, since injecting `throw` there would break class initialization or violate the `set` contract.
 - **Python / Go**: Line-based function stubbing. Signatures and leading `"""docstrings"""` are preserved; Python bodies become `raise NotImplementedError`, Go bodies become `panic(...)`.
@@ -107,6 +107,10 @@ npm run benchmark -- https://github.com/gin-gonic/gin.git
 ## Requirements
 
 - Node.js >= 18.3.0 (uses `node:worker_threads` and the global `performance` API).
+
+## Acknowledgements
+
+This project is built to complement [Repomix](https://github.com/yamadashy/repomix), the powerful codebase packing tool created by [Kazuki Yamada (@yamadashy)](https://github.com/yamadashy). Special thanks for building such an indispensable tool for the AI developer ecosystem.
 
 ## License
 
