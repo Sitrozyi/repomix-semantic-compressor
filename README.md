@@ -2,9 +2,9 @@
 
 [![test](https://github.com/Sitrozyi/repomix-semantic-compressor/actions/workflows/test.yml/badge.svg)](https://github.com/Sitrozyi/repomix-semantic-compressor/actions/workflows/test.yml)
 
-An unofficial semantic post-processor for [Repomix](https://repomix.com). Reduces prompt tokens by 45–70% typically (up to 80%+) by stubbing function bodies while preserving type contracts, interfaces, docstrings, and database schemas ([Benchmark](https://github.com/Sitrozyi/repomix-semantic-compressor#benchmark)).  
+An unofficial semantic post-processor for [Repomix](https://repomix.com). Reduces prompt tokens by 45–70% typically (up to 80%+) by stubbing function bodies while preserving type contracts, interfaces, docstrings, and database schemas ([Benchmark](#benchmark)).  
 
-- **TypeScript / JavaScript**: Full AST-based compression via Babel. Function bodies are replaced with `throw new Error(...)` (inferred `never` return type), so strict type checkers pass without `any` escapes. React hook dependency arrays (`useEffect`, `useMemo`) are retained. Constructors and setters are the exception: constructors are emptied while preserving `super()` calls, and setters are emptied, since injecting `throw` there would break class initialization or violate the `set` contract.
+- **TypeScript / JavaScript**: Full AST-based compression via Babel. Function bodies are replaced with `throw new Error(...)` (inferred `never` return type), so strict type checkers pass without `any` escapes. React hook dependency arrays (`useEffect`, `useMemo`) are retained. Constructors and setters are the exception. Constructors retain only `super()` calls to ensure safe initialization, while setters are left empty to satisfy the `set` contract.
 - **Python / Go**: Line-based function stubbing. Signatures and leading `"""docstrings"""` are preserved; Python bodies become `raise NotImplementedError`, Go bodies become `panic(...)`.
 - **Focus Mode** currently resolves imports and dependency graphs for TypeScript / JavaScript only. Python and Go files are compressed in full-repo mode but not dependency-traced.
 
