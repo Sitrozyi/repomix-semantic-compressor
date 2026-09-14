@@ -13,8 +13,9 @@ Context compressor for Repomix. Reduces prompt tokens by 45–70% typically (up 
 ## How It Compresses
 
 - **Action/Event Protocol Extraction (TS/JS)**: For truncated reducers, emitters, and dispatchers, `switch (action.type)` cases, `emitter.emit('X')`, `dispatch({ type: 'X' })`, and `action.payload.foo` destructuring are summarized into a single `@payloads` line (e.g. `LOGIN_USER(userId, authToken)`), preserving the wire contract without the implementation.
-- **Domain Logic Protection**: Keeps implementations intact for utility/logic functions matching `is*`, `has*`, `can*`, `calc*`, `validate*`, `check*`, etc.
-- **Schemas & Assets**: Retains SQL DDL (`CREATE TABLE`) while truncating bulk `INSERT` seeds. Keeps CSS `:root` tokens and layout properties while omitting decorative rules. Truncates long SVG paths and base64 strings.
+- **Core Logic Whitelist**: Keeps full implementations intact for functions matching predicate and data-handling patterns (`is*`, `has*`, `can*`, `should*`, `calc*`, `calculate*`, `validate*`, `check*`, `parse*`, `format*`, `sanitize*`, including `#privateMethods`).
+- **JSX / TSX List Compaction**: Collapses runs of 3+ identical sibling elements (e.g., repeating `<li>`, `<tr>`, or card components) into a single sample element with an omission comment (e.g., `{/* ...3 repeating <li /> omitted... */}`).
+- **Schemas & Assets**: Retains SQL DDL (`CREATE TABLE`) and preserves the first 2 `INSERT` statements per table as schema samples while collapsing subsequent rows. Keeps CSS `:root` tokens and layout rules while omitting decorative declarations. Truncates long SVG paths and base64 strings.
 - **JSON**: Minifies JSON artifacts by parsing and re-serializing them, stripping redundant whitespace and trailing commas. No structural transformation is applied.
 - **YAML**: Strips full-line comments and collapses blank runs, while leaving block scalars (`|`, `>`) verbatim since their content is string data, not comments.
 - **Dockerfile**: Collapses long multi-line `RUN` instructions while preserving stage structure (`FROM`, `COPY`, `CMD`, `ENTRYPOINT`) and all other directives.
@@ -22,7 +23,7 @@ Context compressor for Repomix. Reduces prompt tokens by 45–70% typically (up 
 
 ## Usage
 
-Run in your repository root. Auto-pack is enabled by default: if `repomix-output.xml` does not exist, it runs `npx repomix` automatically. Pass `--no-auto-pack` to disable this.
+Run in your repository root. Auto-pack is enabled by default: if neither `repomix-output.xml` nor `repomix-output.json` exists, it runs `npx repomix` automatically. Pass `--no-auto-pack` to disable this.
 
 ```bash
 npx @sitrozyi/repomix-semantic-compressor
